@@ -17,19 +17,24 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
 		os.Exit(1)
 	}
+	defer conn.Close()
 
-	buffer := make([]byte, 1024)
-	_, err = conn.Read(buffer)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to read from connection")
-		os.Exit(1)
-	}
+	var req []byte
+	var res []byte
+	for {
+		req = make([]byte, 1024)
+		_, err = conn.Read(req)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to read from connection")
+			os.Exit(1)
+		}
 
-	response := []byte("+PONG\r\n")
-	_, err = conn.Write(response)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to write from connection")
-		os.Exit(1)
+		res = []byte("+PONG\r\n")
+		_, err = conn.Write(res)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Failed to write to connection")
+			os.Exit(1)
+		}
 	}
 
 }
