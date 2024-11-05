@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strings"
 )
 
 func main() {
@@ -15,17 +16,20 @@ func main() {
 	}
 	defer l.Close()
 
+	var store redisStore
+	store.dict = make(map[interface{}]interface{})
+
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
 			continue
 		}
-		go handleConnection(conn)
+		go handleConnection(conn, &store)
 	}
 }
 
-func handleConnection(conn net.Conn) {
+func handleConnection(conn net.Conn, store *redisStore) {
 	defer conn.Close()
 
 	var res []byte
@@ -46,6 +50,7 @@ func handleConnection(conn net.Conn) {
 			fmt.Fprintln(os.Stderr, "expected command name as string")
 			continue
 		}
+		command = strings.ToUpper(command)
 
 		switch command {
 		case "PING":
@@ -58,6 +63,26 @@ func handleConnection(conn net.Conn) {
 				continue
 			}
 			res = encodeBulkString(key)
+			writeToConnection(conn, res)
+		case "SET":
+			if len(call) != 3 {
+				fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
+				continue
+			}
+			store.set(call[1], call[2])
+			res = encodeSimpleString("OK")
+			writeToConnection(conn, res)
+		case "GET":
+			if len(call) != 2 {
+				fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
+				continue
+			}
+			value, ok := store.get(call[1])
+			if !ok {
+				res = encodeNullBulkString()
+			} else {
+				res = encode(value)
+			}
 			writeToConnection(conn, res)
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)

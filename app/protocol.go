@@ -137,6 +137,16 @@ func decodeSet(in <-chan byte) map[interface{}]struct{} {
 	return dict
 }
 
+func encode(value interface{}) []byte {
+	switch t := value.(type) {
+	case int:
+		return encodeInteger(t)
+	case string:
+		return encodeSimpleString(t)
+	}
+	return []byte{}
+}
+
 func encodeSimpleString(str string) []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '+')
@@ -151,6 +161,18 @@ func encodeBulkString(str string) []byte {
 	ret = append(ret, strconv.Itoa(len(str))...)
 	ret = append(ret, "\r\n"...)
 	ret = append(ret, str...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func encodeNullBulkString() []byte {
+	return []byte("$-1\r\n")
+}
+
+func encodeInteger(num int) []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, ':')
+	ret = append(ret, strconv.Itoa(num)...)
 	ret = append(ret, "\r\n"...)
 	return ret
 }
