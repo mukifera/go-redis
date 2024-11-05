@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 )
@@ -27,23 +28,66 @@ func main() {
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 
-	var req []byte
 	var res []byte
-	var err error
+
+	read := make(chan byte, 1<<14)
+	go readFromConnection(conn, read)
 
 	for {
-		req = make([]byte, 1024)
-		_, err = conn.Read(req)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to read from connection")
-			return
+
+		raw_call := decode(read)
+		call, ok := raw_call.([]interface{})
+		if !ok {
+			fmt.Fprintln(os.Stderr, "expected command as array")
+			continue
+		}
+		command, ok := call[0].(string)
+		if !ok {
+			fmt.Fprintln(os.Stderr, "expected command name as string")
+			continue
 		}
 
-		res = []byte("+PONG\r\n")
-		_, err = conn.Write(res)
+		switch command {
+		case "PING":
+			res = encodeSimpleString("PONG")
+			writeToConnection(conn, res)
+		case "ECHO":
+			key, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "expected command name as string")
+				continue
+			}
+			res = encodeBulkString(key)
+			writeToConnection(conn, res)
+		default:
+			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
+		}
+	}
+}
+
+func writeToConnection(conn net.Conn, data []byte) {
+	_, err := conn.Write(data)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
+		return
+	}
+}
+
+func readFromConnection(conn net.Conn, out chan<- byte) {
+	defer close(out)
+
+	for {
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err == io.EOF {
+			continue
+		}
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "Failed to write to connection")
+			fmt.Fprintf(os.Stderr, "Failed to read from connection: %v\n", err)
 			return
+		}
+		for i := 0; i < n; i++ {
+			out <- buf[i]
 		}
 	}
 }
