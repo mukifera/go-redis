@@ -12,12 +12,13 @@ func main() {
 		fmt.Fprintln(os.Stderr, "Failed to bind to port 6379")
 		os.Exit(1)
 	}
+	defer l.Close()
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
-			os.Exit(1)
+			continue
 		}
 		go handleConnection(conn)
 	}
@@ -35,14 +36,14 @@ func handleConnection(conn net.Conn) {
 		_, err = conn.Read(req)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to read from connection")
-			os.Exit(1)
+			return
 		}
 
 		res = []byte("+PONG\r\n")
 		_, err = conn.Write(res)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "Failed to write to connection")
-			os.Exit(1)
+			return
 		}
 	}
 }
