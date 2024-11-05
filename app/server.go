@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -17,7 +18,7 @@ func main() {
 	defer l.Close()
 
 	var store redisStore
-	store.dict = make(map[interface{}]interface{})
+	store.init()
 
 	for {
 		conn, err := l.Accept()
@@ -65,11 +66,33 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			res = encodeBulkString(key)
 			writeToConnection(conn, res)
 		case "SET":
-			if len(call) != 3 {
+			if len(call) != 3 && len(call) != 5 {
 				fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
 				continue
 			}
-			store.set(call[1], call[2])
+			var err error
+			expiry := -1
+			if len(call) == 5 {
+				flag, ok := call[3].(string)
+				if !ok {
+					fmt.Fprintln(os.Stderr, "expected flag to be a string")
+					continue
+				}
+				flag = strings.ToUpper(flag)
+				if flag == "PX" {
+					expiry_str, ok := call[4].(string)
+					if !ok {
+						fmt.Fprintln(os.Stderr, "expected an expiry value")
+						continue
+					}
+					expiry, err = strconv.Atoi(expiry_str)
+					if err != nil {
+						fmt.Fprintf(os.Stderr, "expected expiry value to be an integer: %v\n", err)
+						continue
+					}
+				}
+			}
+			store.set(call[1], call[2], expiry)
 			res = encodeSimpleString("OK")
 			writeToConnection(conn, res)
 		case "GET":
