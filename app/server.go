@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -10,6 +11,11 @@ import (
 )
 
 func main() {
+
+	dir_ptr := flag.String("dir", "", "the directory of the RDB config file")
+	dbfilename_ptr := flag.String("dbfilename", "", "the name of the RDB config file")
+	flag.Parse()
+
 	l, err := net.Listen("tcp", "0.0.0.0:6379")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to bind to port 6379")
@@ -19,6 +25,12 @@ func main() {
 
 	var store redisStore
 	store.init()
+	if dir_ptr != nil && *dir_ptr != "" {
+		store.params["dir"] = *dir_ptr
+	}
+	if dbfilename_ptr != nil && *dbfilename_ptr != "" {
+		store.params["dbfilename"] = *dbfilename_ptr
+	}
 
 	for {
 		conn, err := l.Accept()
@@ -63,7 +75,7 @@ func handleConnection(conn net.Conn, store *redisStore) {
 				fmt.Fprintln(os.Stderr, "expected command name as string")
 				continue
 			}
-			res = encodeBulkString(key)
+			res = encodeBulkString(&key)
 			writeToConnection(conn, res)
 		case "SET":
 			if len(call) != 3 && len(call) != 5 {
@@ -102,10 +114,39 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			}
 			value, ok := store.get(call[1])
 			if !ok {
-				res = encodeNullBulkString()
+				res = encodeBulkString(nil)
 			} else {
 				res = encode(value)
 			}
+			writeToConnection(conn, res)
+		case "CONFIG":
+			if len(call) != 3 {
+				fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
+				continue
+			}
+			sub, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "expected a string subcommand to CONFIG command")
+				continue
+			}
+			sub = strings.ToUpper(sub)
+			if sub != "GET" {
+				fmt.Fprintln(os.Stderr, "invalid use of the CONFIG GET command")
+				continue
+			}
+			param, ok := call[2].(string)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "expected a string param")
+				continue
+			}
+			value, ok := store.getParam(param)
+			vals := []interface{}{&param}
+			if !ok {
+				vals = append(vals, nil)
+			} else {
+				vals = append(vals, &value)
+			}
+			res = encode(vals)
 			writeToConnection(conn, res)
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)

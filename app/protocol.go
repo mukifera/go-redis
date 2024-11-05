@@ -138,11 +138,18 @@ func decodeSet(in <-chan byte) map[interface{}]struct{} {
 }
 
 func encode(value interface{}) []byte {
+	if value == nil {
+		return encodeBulkString(nil)
+	}
 	switch t := value.(type) {
 	case int:
 		return encodeInteger(t)
 	case string:
 		return encodeSimpleString(t)
+	case *string:
+		return encodeBulkString(t)
+	case []interface{}:
+		return encodeArray(t)
 	}
 	return []byte{}
 }
@@ -155,24 +162,35 @@ func encodeSimpleString(str string) []byte {
 	return ret
 }
 
-func encodeBulkString(str string) []byte {
+func encodeBulkString(str *string) []byte {
+	if str == nil {
+		return []byte("$-1\r\n")
+	}
 	ret := make([]byte, 0)
 	ret = append(ret, '$')
-	ret = append(ret, strconv.Itoa(len(str))...)
+	ret = append(ret, strconv.Itoa(len(*str))...)
 	ret = append(ret, "\r\n"...)
-	ret = append(ret, str...)
+	ret = append(ret, *str...)
 	ret = append(ret, "\r\n"...)
 	return ret
-}
-
-func encodeNullBulkString() []byte {
-	return []byte("$-1\r\n")
 }
 
 func encodeInteger(num int) []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, ':')
 	ret = append(ret, strconv.Itoa(num)...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func encodeArray(arr []interface{}) []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '*')
+	ret = append(ret, strconv.Itoa(len(arr))...)
+	ret = append(ret, "\r\n"...)
+	for i := 0; i < len(arr); i++ {
+		ret = append(ret, encode(arr[i])...)
+	}
 	ret = append(ret, "\r\n"...)
 	return ret
 }

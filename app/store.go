@@ -8,12 +8,14 @@ import (
 type redisStore struct {
 	dict   map[interface{}]interface{}
 	expiry map[interface{}]int64
+	params map[string]string
 	mu     sync.Mutex
 }
 
 func (s *redisStore) init() {
 	s.dict = make(map[interface{}]interface{})
 	s.expiry = make(map[interface{}]int64)
+	s.params = make(map[string]string)
 }
 
 func (s *redisStore) set(key interface{}, value interface{}, expiry int) {
@@ -36,5 +38,10 @@ func (s *redisStore) get(key interface{}) (interface{}, bool) {
 		delete(s.expiry, key)
 		return nil, false
 	}
+	return value, ok
+}
+
+func (s *redisStore) getParam(key string) (string, bool) {
+	value, ok := s.params[key]
 	return value, ok
 }
