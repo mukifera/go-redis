@@ -178,6 +178,10 @@ func encodeBulkString(str *string) []byte {
 func encodeInteger(num int) []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, ':')
+	if num < 0 {
+		ret = append(ret, '-')
+		num = -num
+	}
 	ret = append(ret, strconv.Itoa(num)...)
 	ret = append(ret, "\r\n"...)
 	return ret
@@ -191,6 +195,5 @@ func encodeArray(arr []interface{}) []byte {
 	for i := 0; i < len(arr); i++ {
 		ret = append(ret, encode(arr[i])...)
 	}
-	ret = append(ret, "\r\n"...)
 	return ret
 }
