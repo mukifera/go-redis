@@ -27,21 +27,23 @@ func main() {
 	var store *redisStore
 	store = new(redisStore)
 	store.init()
-	rdb_file := ""
+	dir := ""
 	if dir_ptr != nil && *dir_ptr != "" {
-		store.params["dir"] = *dir_ptr
-		rdb_file = filepath.Join(rdb_file, *dir_ptr)
+		dir = *dir_ptr
 	}
+	dbfilename := ""
 	if dbfilename_ptr != nil && *dbfilename_ptr != "" {
-		store.params["dbfilename"] = *dbfilename_ptr
-		rdb_file = filepath.Join(rdb_file, *dbfilename_ptr)
+		dbfilename = *dbfilename_ptr
 	}
+	rdb_file := filepath.Join(dir, dbfilename)
 
 	store, err = readRDBFile(rdb_file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
+	store.setParam("dir", dir)
+	store.setParam("dbfilename", dbfilename)
 
 	for {
 		conn, err := l.Accept()
