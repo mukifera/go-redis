@@ -18,27 +18,36 @@ func (s *redisStore) init() {
 	s.params = make(map[string]string)
 }
 
-func (s *redisStore) set(key interface{}, value interface{}, expiry int) {
+func (s *redisStore) set(key interface{}, value interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
-	if expiry != -1 {
-		s.expiry[key] = time.Now().Add(time.Duration(expiry) * time.Millisecond).UnixMilli()
-	} else {
-		s.expiry[key] = -1
-	}
+}
+
+func (s *redisStore) setWithExpiry(key interface{}, value interface{}, expiry uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dict[key] = value
+	s.expiry[key] = time.Now().Add(time.Duration(expiry) * time.Millisecond).UnixMilli()
 }
 
 func (s *redisStore) get(key interface{}) (interface{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	value, ok := s.dict[key]
-	if ok && s.expiry[key] != -1 && time.Now().UnixMilli() > s.expiry[key] {
+	value, in_dict := s.dict[key]
+	expiry, in_expiry := s.expiry[key]
+	if in_dict && in_expiry && time.Now().UnixMilli() > expiry {
 		delete(s.dict, key)
 		delete(s.expiry, key)
 		return nil, false
 	}
-	return value, ok
+	return value, in_dict
+}
+
+func (s *redisStore) setParam(key string, value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.params[key] = value
 }
 
 func (s *redisStore) getParam(key string) (string, bool) {

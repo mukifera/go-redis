@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -23,13 +24,23 @@ func main() {
 	}
 	defer l.Close()
 
-	var store redisStore
+	var store *redisStore
+	store = new(redisStore)
 	store.init()
+	rdb_file := ""
 	if dir_ptr != nil && *dir_ptr != "" {
 		store.params["dir"] = *dir_ptr
+		rdb_file = filepath.Join(rdb_file, *dir_ptr)
 	}
 	if dbfilename_ptr != nil && *dbfilename_ptr != "" {
 		store.params["dbfilename"] = *dbfilename_ptr
+		rdb_file = filepath.Join(rdb_file, *dbfilename_ptr)
+	}
+
+	store, err = readRDBFile(rdb_file)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
 	}
 
 	for {
@@ -38,7 +49,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
 			continue
 		}
-		go handleConnection(conn, &store)
+		go handleConnection(conn, store)
 	}
 }
 
@@ -83,7 +94,7 @@ func handleConnection(conn net.Conn, store *redisStore) {
 				continue
 			}
 			var err error
-			expiry := -1
+			var expiry uint64
 			if len(call) == 5 {
 				flag, ok := call[3].(string)
 				if !ok {
@@ -97,14 +108,16 @@ func handleConnection(conn net.Conn, store *redisStore) {
 						fmt.Fprintln(os.Stderr, "expected an expiry value")
 						continue
 					}
-					expiry, err = strconv.Atoi(expiry_str)
+					expiry, err = strconv.ParseUint(expiry_str, 10, 64)
 					if err != nil {
 						fmt.Fprintf(os.Stderr, "expected expiry value to be an integer: %v\n", err)
 						continue
 					}
 				}
+				store.setWithExpiry(call[1], call[2], expiry)
+			} else {
+				store.set(call[1], call[2])
 			}
-			store.set(call[1], call[2], expiry)
 			res = encodeSimpleString("OK")
 			writeToConnection(conn, res)
 		case "GET":
