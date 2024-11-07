@@ -95,6 +95,11 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			}
 			var err error
 			var expiry uint64
+			key, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "key must be a string")
+				continue
+			}
 			if len(call) == 5 {
 				flag, ok := call[3].(string)
 				if !ok {
@@ -114,9 +119,9 @@ func handleConnection(conn net.Conn, store *redisStore) {
 						continue
 					}
 				}
-				store.setWithExpiry(call[1], call[2], expiry)
+				store.setWithExpiry(key, call[2], expiry)
 			} else {
-				store.set(call[1], call[2])
+				store.set(key, call[2])
 			}
 			res = encodeSimpleString("OK")
 			writeToConnection(conn, res)
@@ -125,7 +130,12 @@ func handleConnection(conn net.Conn, store *redisStore) {
 				fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
 				continue
 			}
-			value, ok := store.get(call[1])
+			key, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintln(os.Stderr, "key must be a string")
+				continue
+			}
+			value, ok := store.get(key)
 			if !ok {
 				res = encodeBulkString(nil)
 			} else {
@@ -161,6 +171,22 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			}
 			res = encode(vals)
 			writeToConnection(conn, res)
+
+		case "KEYS":
+			if len(call) != 2 {
+				fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
+				continue
+			}
+
+			search, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "expected a string search parameter")
+			}
+
+			keys := store.getKeys(search)
+			res = encode(keys)
+			writeToConnection(conn, res)
+
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
 		}

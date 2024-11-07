@@ -148,6 +148,8 @@ func encode(value interface{}) []byte {
 		return encodeSimpleString(t)
 	case *string:
 		return encodeBulkString(t)
+	case []string:
+		return encodeArray(t)
 	case []interface{}:
 		return encodeArray(t)
 	}
@@ -187,7 +189,7 @@ func encodeInteger(num int) []byte {
 	return ret
 }
 
-func encodeArray(arr []interface{}) []byte {
+func encodeArray[T any](arr []T) []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '*')
 	ret = append(ret, strconv.Itoa(len(arr))...)

@@ -6,32 +6,32 @@ import (
 )
 
 type redisStore struct {
-	dict   map[interface{}]interface{}
+	dict   map[string]interface{}
 	expiry map[interface{}]int64
 	params map[string]string
 	mu     sync.Mutex
 }
 
 func (s *redisStore) init() {
-	s.dict = make(map[interface{}]interface{})
+	s.dict = make(map[string]interface{})
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 }
 
-func (s *redisStore) set(key interface{}, value interface{}) {
+func (s *redisStore) set(key string, value interface{}) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 }
 
-func (s *redisStore) setWithExpiry(key interface{}, value interface{}, expiry uint64) {
+func (s *redisStore) setWithExpiry(key string, value interface{}, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 	s.expiry[key] = time.Now().Add(time.Duration(expiry) * time.Millisecond).UnixMilli()
 }
 
-func (s *redisStore) get(key interface{}) (interface{}, bool) {
+func (s *redisStore) get(key string) (interface{}, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, in_dict := s.dict[key]
@@ -53,4 +53,14 @@ func (s *redisStore) setParam(key string, value string) {
 func (s *redisStore) getParam(key string) (string, bool) {
 	value, ok := s.params[key]
 	return value, ok
+}
+
+func (s *redisStore) getKeys(_ string) []string {
+	keys := make([]string, len(s.dict))
+	i := 0
+	for key := range s.dict {
+		keys[i] = key
+		i++
+	}
+	return keys
 }
