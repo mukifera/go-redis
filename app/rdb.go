@@ -74,14 +74,14 @@ func readRDBFile(filename string) (*redisStore, error) {
 			current += 8
 			n, key, value := readKeyValue(data[current:])
 			current += n
-			store.setWithExpiry(key, value, expiry)
+			store.setWithAbsoluteExpiry(key, value, expiry)
 
 		case opCodes.EXPIRETIME:
 			expiry := uint64(binary.LittleEndian.Uint32(data[current:]))
 			current += 4
 			n, key, value := readKeyValue(data[current:])
 			current += n
-			store.setWithExpiry(key, value, expiry*1000)
+			store.setWithAbsoluteExpiry(key, value, expiry*1000)
 
 		case opCodes.SELECTDB:
 			n, size, content_type := readEncodedSize(data[current:])

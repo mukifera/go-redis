@@ -25,10 +25,14 @@ func (s *redisStore) set(key string, value interface{}) {
 }
 
 func (s *redisStore) setWithExpiry(key string, value interface{}, expiry uint64) {
+	s.setWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
+}
+
+func (s *redisStore) setWithAbsoluteExpiry(key string, value interface{}, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
-	s.expiry[key] = time.Now().Add(time.Duration(expiry) * time.Millisecond).UnixMilli()
+	s.expiry[key] = int64(expiry)
 }
 
 func (s *redisStore) get(key string) (interface{}, bool) {
