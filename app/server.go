@@ -190,6 +190,25 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			res = encode(keys)
 			writeToConnection(conn, res)
 
+		case "INFO":
+			if len(call) != 2 {
+				fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
+				continue
+			}
+
+			arg, ok := call[1].(string)
+			if !ok {
+				fmt.Fprintf(os.Stderr, "expected a string argument for INFO")
+			}
+			if arg != "replication" {
+				continue
+			}
+
+			info := "role:master"
+			res = encodeBulkString(&info)
+			fmt.Println(string(res))
+			writeToConnection(conn, res)
+
 		default:
 			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
 		}
