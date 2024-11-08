@@ -172,6 +172,23 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 		os.Exit(1)
 	}
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+
+	psync := generateCommand("PSYNC", "?", "-1")
+	writeToConnection(master_conn, psync)
+	raw := decode(read)
+	res, ok := raw.(string)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "response is not a string")
+		os.Exit(1)
+	}
+	strs := strings.Split(res, " ")
+	if len(strs) != 3 || strs[0] != "FULLRESYNC" || strs[2] != "0" {
+		fmt.Fprintf(os.Stderr, "malformed response to PSYNC command")
+		os.Exit(1)
+	}
+
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+
 }
 
 func waitForResponse(response string, in <-chan byte) bool {
