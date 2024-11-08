@@ -16,6 +16,7 @@ func main() {
 	dir_ptr := flag.String("dir", "", "the directory of the RDB config file")
 	dbfilename_ptr := flag.String("dbfilename", "", "the name of the RDB config file")
 	port_ptr := flag.String("port", "6379", "the port to run the server on")
+	replicaof_ptr := flag.String("replicaof", "", "indicate if the server is a replica of another. In the form of '<MASTER_HOST> <MASTER_PORT>'")
 	flag.Parse()
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+*port_ptr)
@@ -45,6 +46,15 @@ func main() {
 	}
 	store.setParam("dir", dir)
 	store.setParam("dbfilename", dbfilename)
+
+	if *replicaof_ptr != "" {
+		strs := strings.Split(*replicaof_ptr, " ")
+		if len(strs) != 2 {
+			fmt.Fprintf(os.Stderr, "malformed value for --replicaof flag")
+			os.Exit(1)
+		}
+		store.setParam("replicaof", strings.Join(strs, ":"))
+	}
 
 	for {
 		conn, err := l.Accept()
@@ -204,9 +214,13 @@ func handleConnection(conn net.Conn, store *redisStore) {
 				continue
 			}
 
-			info := "role:master"
+			role := "master"
+			if _, ok := store.getParam("replicaof"); ok {
+				role = "slave"
+			}
+
+			info := "role:" + role
 			res = encodeBulkString(&info)
-			fmt.Println(string(res))
 			writeToConnection(conn, res)
 
 		default:
