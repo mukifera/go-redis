@@ -119,7 +119,7 @@ func readRDBFile(filename string) (*redisStore, error) {
 			fmt.Println(checksum)
 			return &store, nil
 
-		case 0x00:
+		case rdbValueTypes.LIST, rdbValueTypes.SET, rdbValueTypes.STRING:
 			current -= 1
 			n, key, value := readKeyValue(data[current:])
 			current += n
@@ -222,22 +222,29 @@ func readLengthEncodedInt(data []byte) (bytes_read uint8, integer uint32) {
 	return
 }
 
-func readKeyValue(data []byte) (bytes_read uint64, key string, value string) {
+func readKeyValue(data []byte) (bytes_read uint64, key string, value interface{}) {
 
 	data_type := data[0]
-	switch data_type {
-	case 0x00:
-	default:
-		fmt.Fprintf(os.Stderr, "unsupported key/value type\n")
-		os.Exit(1)
-	}
 
 	bytes_read = 1
 
 	n, key := readEncodedString(data[bytes_read:])
 	bytes_read += n
-	n, value = readEncodedString(data[bytes_read:])
-	bytes_read += n
+
+	switch data_type {
+	case rdbValueTypes.STRING:
+		n, value = readEncodedString(data[bytes_read:])
+		bytes_read += n
+	case rdbValueTypes.LIST:
+		n, value = readRDBList(data[bytes_read:])
+		bytes_read += n
+	case rdbValueTypes.SET:
+		n, value = readRDBSet(data[bytes_read:])
+		bytes_read += n
+	default:
+		fmt.Fprintf(os.Stderr, "unsupported key/value type\n")
+		os.Exit(1)
+	}
 
 	return
 }
@@ -255,5 +262,14 @@ func readRDBList(data []byte) (bytes_read uint64, list []string) {
 		list[i] = str
 	}
 
+	return
+}
+
+func readRDBSet(data []byte) (bytes_read uint64, set map[string]struct{}) {
+	bytes_read, list := readRDBList(data)
+	set = make(map[string]struct{})
+	for _, str := range list {
+		set[str] = struct{}{}
+	}
 	return
 }

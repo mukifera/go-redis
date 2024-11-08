@@ -117,6 +117,44 @@ func TestReadRDBList(t *testing.T) {
 	}
 }
 
+func TestReadRDBSet(t *testing.T) {
+
+	tests := []struct {
+		name       string
+		bytes      []byte
+		bytes_read uint64
+		set        map[string]struct{}
+	}{
+		{name: "simple set", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, set: map[string]struct{}{"foo": struct{}{}, "bar": struct{}{}}},
+		{name: "empty set", bytes: []byte{0x00}, bytes_read: 1, set: map[string]struct{}{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bytes_read, set := readRDBSet(test.bytes)
+			if bytes_read != test.bytes_read || !equalSets(set, test.set) {
+				t.Errorf("Expected: bytes_read = %d, set: %v\nGot: bytes_read: %d, set: %v",
+					test.bytes_read, test.set, bytes_read, set,
+				)
+			}
+		})
+	}
+}
+
+func equalSets(a map[string]struct{}, b map[string]struct{}) bool {
+	for key := range a {
+		if _, ok := b[key]; !ok {
+			return false
+		}
+	}
+	for key := range b {
+		if _, ok := a[key]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func equalSlices(a []string, b []string) bool {
 	if len(a) != len(b) {
 		return false
