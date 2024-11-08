@@ -148,6 +148,8 @@ func encode(value interface{}) []byte {
 		return encodeSimpleString(t)
 	case *string:
 		return encodeBulkString(t)
+	case []*string:
+		return encodeArray(t)
 	case []string:
 		return encodeArray(t)
 	case []interface{}:

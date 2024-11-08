@@ -55,7 +55,19 @@ func main() {
 			fmt.Fprintf(os.Stderr, "malformed value for --replicaof flag")
 			os.Exit(1)
 		}
-		store.setParam("replicaof", strings.Join(strs, ":"))
+		ip_port := strings.Join(strs, ":")
+		store.setParam("replicaof", ip_port)
+
+		master_conn, err := net.Dial("tcp", ip_port)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "could not connect to master")
+			os.Exit(1)
+		}
+
+		ping := generateCommand("PING")
+		writeToConnection(master_conn, ping)
+		fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+
 	} else {
 		store.setParam("master_replid", generateRandomID(40))
 		store.setParam("master_repl_offset", "0")
@@ -277,4 +289,12 @@ func generateRandomID(length int) string {
 		sb.WriteByte(alpha[seededRand.Intn(len(alpha))])
 	}
 	return sb.String()
+}
+
+func generateCommand(strs ...string) []byte {
+	arr := make([]*string, len(strs))
+	for i := 0; i < len(arr); i++ {
+		arr[i] = &strs[i]
+	}
+	return encode(arr)
 }
