@@ -15,9 +15,10 @@ func main() {
 
 	dir_ptr := flag.String("dir", "", "the directory of the RDB config file")
 	dbfilename_ptr := flag.String("dbfilename", "", "the name of the RDB config file")
+	port_ptr := flag.String("port", "6379", "the port to run the server on")
 	flag.Parse()
 
-	l, err := net.Listen("tcp", "0.0.0.0:6379")
+	l, err := net.Listen("tcp", "0.0.0.0:"+*port_ptr)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to bind to port 6379")
 		os.Exit(1)
