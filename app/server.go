@@ -86,170 +86,17 @@ func main() {
 func handleConnection(conn net.Conn, store *redisStore) {
 	defer conn.Close()
 
-	var res []byte
-
 	read := make(chan byte, 1<<14)
 	go readFromConnection(conn, read)
 
 	for {
-
 		raw_call := decode(read)
 		call, ok := raw_call.([]interface{})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "expected command as array")
 			continue
 		}
-		command, ok := call[0].(string)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "expected command name as string")
-			continue
-		}
-		command = strings.ToUpper(command)
-
-		switch command {
-		case "PING":
-			res = encodeSimpleString("PONG")
-			writeToConnection(conn, res)
-		case "ECHO":
-			key, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "expected command name as string")
-				continue
-			}
-			res = encodeBulkString(&key)
-			writeToConnection(conn, res)
-		case "SET":
-			if len(call) != 3 && len(call) != 5 {
-				fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
-				continue
-			}
-			var err error
-			var expiry uint64
-			key, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "key must be a string")
-				continue
-			}
-			if len(call) == 5 {
-				flag, ok := call[3].(string)
-				if !ok {
-					fmt.Fprintln(os.Stderr, "expected flag to be a string")
-					continue
-				}
-				flag = strings.ToUpper(flag)
-				if flag == "PX" {
-					expiry_str, ok := call[4].(string)
-					if !ok {
-						fmt.Fprintln(os.Stderr, "expected an expiry value")
-						continue
-					}
-					expiry, err = strconv.ParseUint(expiry_str, 10, 64)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "expected expiry value to be an integer: %v\n", err)
-						continue
-					}
-				}
-				store.setWithExpiry(key, call[2], expiry)
-			} else {
-				store.set(key, call[2])
-			}
-			res = encodeSimpleString("OK")
-			writeToConnection(conn, res)
-		case "GET":
-			if len(call) != 2 {
-				fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
-				continue
-			}
-			key, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "key must be a string")
-				continue
-			}
-			value, ok := store.get(key)
-			if !ok {
-				res = encodeBulkString(nil)
-			} else {
-				res = encode(value)
-			}
-			writeToConnection(conn, res)
-		case "CONFIG":
-			if len(call) != 3 {
-				fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
-				continue
-			}
-			sub, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "expected a string subcommand to CONFIG command")
-				continue
-			}
-			sub = strings.ToUpper(sub)
-			if sub != "GET" {
-				fmt.Fprintln(os.Stderr, "invalid use of the CONFIG GET command")
-				continue
-			}
-			param, ok := call[2].(string)
-			if !ok {
-				fmt.Fprintln(os.Stderr, "expected a string param")
-				continue
-			}
-			value, ok := store.getParam(param)
-			vals := []interface{}{&param}
-			if !ok {
-				vals = append(vals, nil)
-			} else {
-				vals = append(vals, &value)
-			}
-			res = encode(vals)
-			writeToConnection(conn, res)
-
-		case "KEYS":
-			if len(call) != 2 {
-				fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
-				continue
-			}
-
-			search, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "expected a string search parameter")
-			}
-
-			keys := store.getKeys(search)
-			res = encode(keys)
-			writeToConnection(conn, res)
-
-		case "INFO":
-			if len(call) != 2 {
-				fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
-				continue
-			}
-
-			arg, ok := call[1].(string)
-			if !ok {
-				fmt.Fprintf(os.Stderr, "expected a string argument for INFO")
-			}
-			if arg != "replication" {
-				continue
-			}
-
-			role := "master"
-			if _, ok := store.getParam("replicaof"); ok {
-				role = "slave"
-			}
-			strs := []string{"role:" + role}
-			if role == "master" {
-				master_replid, _ := store.getParam("master_replid")
-				master_repl_offset, _ := store.getParam("master_repl_offset")
-				strs = append(strs, "master_replid:"+master_replid)
-				strs = append(strs, "master_repl_offset:"+master_repl_offset)
-			}
-
-			info := strings.Join(strs, "\r\n")
-			res = encodeBulkString(&info)
-			writeToConnection(conn, res)
-
-		default:
-			fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
-		}
+		handleCommand(call, conn, store)
 	}
 }
 
