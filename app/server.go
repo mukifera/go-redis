@@ -4,11 +4,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -54,6 +56,9 @@ func main() {
 			os.Exit(1)
 		}
 		store.setParam("replicaof", strings.Join(strs, ":"))
+	} else {
+		store.setParam("master_replid", generateRandomID(40))
+		store.setParam("master_repl_offset", "0")
 	}
 
 	for {
@@ -218,8 +223,15 @@ func handleConnection(conn net.Conn, store *redisStore) {
 			if _, ok := store.getParam("replicaof"); ok {
 				role = "slave"
 			}
+			strs := []string{"role:" + role}
+			if role == "master" {
+				master_replid, _ := store.getParam("master_replid")
+				master_repl_offset, _ := store.getParam("master_repl_offset")
+				strs = append(strs, "master_replid:"+master_replid)
+				strs = append(strs, "master_repl_offset:"+master_repl_offset)
+			}
 
-			info := "role:" + role
+			info := strings.Join(strs, "\r\n")
 			res = encodeBulkString(&info)
 			writeToConnection(conn, res)
 
@@ -254,4 +266,15 @@ func readFromConnection(conn net.Conn, out chan<- byte) {
 			out <- buf[i]
 		}
 	}
+}
+
+var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
+
+func generateRandomID(length int) string {
+	const alpha = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	var sb strings.Builder
+	for i := 0; i < length; i++ {
+		sb.WriteByte(alpha[seededRand.Intn(len(alpha))])
+	}
+	return sb.String()
 }
