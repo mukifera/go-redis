@@ -92,3 +92,39 @@ func TestReadEncodedString(t *testing.T) {
 		})
 	}
 }
+
+func TestReadRDBList(t *testing.T) {
+
+	tests := []struct {
+		name       string
+		bytes      []byte
+		bytes_read uint64
+		list       []string
+	}{
+		{name: "simple list", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, list: []string{"foo", "bar"}},
+		{name: "empty list", bytes: []byte{0x00}, bytes_read: 1, list: []string{}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			bytes_read, list := readRDBList(test.bytes)
+			if bytes_read != test.bytes_read || !equalSlices(list, test.list) {
+				t.Errorf("Expected: bytes_read = %d, list: %v\nGot: bytes_read: %d, list: %v",
+					test.bytes_read, test.list, bytes_read, list,
+				)
+			}
+		})
+	}
+}
+
+func equalSlices(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := 0; i < len(a); i++ {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}

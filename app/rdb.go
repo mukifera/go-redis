@@ -33,6 +33,32 @@ var opCodes = struct {
 	AUX:          0xFA,
 }
 
+var rdbValueTypes = struct {
+	STRING             byte
+	LIST               byte
+	SET                byte
+	SORTED_SET         byte
+	HASH               byte
+	ZIPMAP             byte
+	ZIPLIST            byte
+	INTSET             byte
+	SORTED_SET_ZIPLIST byte
+	HASHMAP_ZIPLIST    byte
+	LIST_QUICKLIST     byte
+}{
+	STRING:             0,
+	LIST:               1,
+	SET:                2,
+	SORTED_SET:         3,
+	HASH:               4,
+	ZIPMAP:             9,
+	ZIPLIST:            10,
+	INTSET:             11,
+	SORTED_SET_ZIPLIST: 12,
+	HASHMAP_ZIPLIST:    13,
+	LIST_QUICKLIST:     14,
+}
+
 func readRDBFile(filename string) (*redisStore, error) {
 	var store redisStore
 	var current uint64 = 9
@@ -212,6 +238,22 @@ func readKeyValue(data []byte) (bytes_read uint64, key string, value string) {
 	bytes_read += n
 	n, value = readEncodedString(data[bytes_read:])
 	bytes_read += n
+
+	return
+}
+
+func readRDBList(data []byte) (bytes_read uint64, list []string) {
+	bytes_read = 0
+
+	n, size := readLengthEncodedInt(data)
+	bytes_read += uint64(n)
+	list = make([]string, size)
+	var i uint32
+	for i = 0; i < size; i++ {
+		n, str := readEncodedString(data[bytes_read:])
+		bytes_read += n
+		list[i] = str
+	}
 
 	return
 }
