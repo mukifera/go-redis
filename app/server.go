@@ -58,15 +58,7 @@ func main() {
 		ip_port := strings.Join(strs, ":")
 		store.setParam("replicaof", ip_port)
 
-		master_conn, err := net.Dial("tcp", ip_port)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "could not connect to master")
-			os.Exit(1)
-		}
-
-		ping := generateCommand("PING")
-		writeToConnection(master_conn, ping)
-		fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+		performMasterHandshake(*port_ptr, ip_port)
 
 	} else {
 		store.setParam("master_replid", generateRandomID(40))
@@ -90,8 +82,8 @@ func handleConnection(conn net.Conn, store *redisStore) {
 	go readFromConnection(conn, read)
 
 	for {
-		raw_call := decode(read)
-		call, ok := raw_call.([]interface{})
+		response := decode(read)
+		call, ok := response.([]interface{})
 		if !ok {
 			fmt.Fprintln(os.Stderr, "expected command as array")
 			continue
@@ -144,4 +136,46 @@ func generateCommand(strs ...string) []byte {
 		arr[i] = &strs[i]
 	}
 	return encode(arr)
+}
+
+func performMasterHandshake(listening_port string, master_ip_port string) {
+
+	master_conn, err := net.Dial("tcp", master_ip_port)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "could not connect to master")
+		os.Exit(1)
+	}
+
+	read := make(chan byte, 1<<14)
+	go readFromConnection(master_conn, read)
+
+	ping := generateCommand("PING")
+	writeToConnection(master_conn, ping)
+	if !waitForResponse("PONG", read) {
+		fmt.Fprintf(os.Stderr, "failed to PING master")
+		os.Exit(1)
+	}
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+
+	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
+	writeToConnection(master_conn, replconf)
+	if !waitForResponse("OK", read) {
+		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
+		os.Exit(1)
+	}
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+
+	replconf = generateCommand("REPLCONF", "capa", "psync2")
+	writeToConnection(master_conn, replconf)
+	if !waitForResponse("OK", read) {
+		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
+		os.Exit(1)
+	}
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+}
+
+func waitForResponse(response string, in <-chan byte) bool {
+	actual := decode(in)
+	str, ok := actual.(string)
+	return ok && str == response
 }
