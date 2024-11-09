@@ -27,20 +27,23 @@ func main() {
 	replicaof_ptr := flag.String("replicaof", "", "indicate if the server is a replica of another. In the form of '<MASTER_HOST> <MASTER_PORT>'")
 	flag.Parse()
 
-	startServer(serverFlags{
+	err := startServer(serverFlags{
 		dir:        *dir_ptr,
 		dbfilename: *dbfilename_ptr,
 		port:       *port_ptr,
 		replicaof:  *replicaof_ptr,
-	})
+	}, nil)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		os.Exit(1)
+	}
 }
 
-func startServer(flags serverFlags) {
+func startServer(flags serverFlags, stop <-chan struct{}) error {
 
 	l, err := net.Listen("tcp", "0.0.0.0:"+flags.port)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "Failed to bind to port 6379")
-		os.Exit(1)
+		return fmt.Errorf("failed to bind to port %s", flags.port)
 	}
 	defer l.Close()
 
@@ -51,8 +54,7 @@ func startServer(flags serverFlags) {
 
 	store, err = readRDBFile(rdb_file)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		os.Exit(1)
+		return err
 	}
 	store.setParam("dir", flags.dir)
 	store.setParam("dbfilename", flags.dbfilename)
@@ -60,8 +62,7 @@ func startServer(flags serverFlags) {
 	if flags.replicaof != "" {
 		strs := strings.Split(flags.replicaof, " ")
 		if len(strs) != 2 {
-			fmt.Fprintf(os.Stderr, "malformed value for --replicaof flag")
-			os.Exit(1)
+			return fmt.Errorf("malformed value for --replicaof flag")
 		}
 		ip_port := strings.Join(strs, ":")
 		store.setParam("replicaof", ip_port)
@@ -74,12 +75,18 @@ func startServer(flags serverFlags) {
 	}
 
 	for {
-		conn, err := l.Accept()
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
-			continue
+		select {
+		case <-stop:
+			return nil
+		default:
+			conn, err := l.Accept()
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error accepting connection: %v\n", err)
+				continue
+			}
+			go handleConnection(conn, store)
+
 		}
-		go handleConnection(conn, store)
 	}
 }
 
