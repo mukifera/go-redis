@@ -82,14 +82,6 @@ func (r respSet) encode() []byte {
 	return ret
 }
 
-func createSet[T comparable](items ...T) map[T]struct{} {
-	ret := make(map[T]struct{})
-	for _, item := range items {
-		ret[item] = struct{}{}
-	}
-	return ret
-}
-
 func (r respBoolean) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '#')
