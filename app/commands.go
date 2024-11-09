@@ -8,16 +8,15 @@ import (
 	"strings"
 )
 
-func handleCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 
-	command, ok := call[0].(string)
+	command, ok := call[0].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected command name as string")
 		return
 	}
-	command = strings.ToUpper(command)
 
-	switch command {
+	switch strings.ToUpper(string(command)) {
 	case "PING":
 		handlePingCommand(conn)
 	case "ECHO":
@@ -38,21 +37,21 @@ func handleCommand(call []interface{}, conn net.Conn, store *redisStore) {
 }
 
 func handlePingCommand(conn net.Conn) {
-	res := encodeSimpleString("PONG")
-	writeToConnection(conn, res)
+	res := respSimpleString("PONG")
+	writeToConnection(conn, res.encode())
 }
 
-func handleEchoCommand(call []interface{}, conn net.Conn) {
-	key, ok := call[1].(string)
+func handleEchoCommand(call respArray, conn net.Conn) {
+	key, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected command name as string")
 		return
 	}
-	res := encodeBulkString(&key)
-	writeToConnection(conn, res)
+	res := respBulkString(key)
+	writeToConnection(conn, res.encode())
 }
 
-func handleSetCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleSetCommand(call respArray, conn net.Conn, store *redisStore) {
 
 	if len(call) != 3 && len(call) != 5 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
@@ -60,113 +59,115 @@ func handleSetCommand(call []interface{}, conn net.Conn, store *redisStore) {
 	}
 	var err error
 	var expiry uint64
-	key, ok := call[1].(string)
+	key, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "key must be a string")
 		return
 	}
+	value, ok := call[2].(respBulkString)
+	if !ok {
+		fmt.Fprintln(os.Stderr, "value must be a string")
+	}
 	if len(call) == 5 {
-		flag, ok := call[3].(string)
+		flag, ok := call[3].(respBulkString)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "expected flag to be a string")
 			return
 		}
-		flag = strings.ToUpper(flag)
-		if flag == "PX" {
-			expiry_str, ok := call[4].(string)
+		if strings.ToUpper(string(flag)) == "PX" {
+			expiry_str, ok := call[4].(respBulkString)
 			if !ok {
 				fmt.Fprintln(os.Stderr, "expected an expiry value")
 				return
 			}
-			expiry, err = strconv.ParseUint(expiry_str, 10, 64)
+			expiry, err = strconv.ParseUint(string(expiry_str), 10, 64)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "expected expiry value to be an integer: %v\n", err)
 				return
 			}
 		}
-		store.setWithExpiry(key, call[2], expiry)
+		store.setWithExpiry(string(key), value, expiry)
 	} else {
-		store.set(key, call[2])
+		store.set(string(key), call[2])
 	}
-	res := encodeSimpleString("OK")
-	writeToConnection(conn, res)
+	res := respSimpleString("OK")
+	writeToConnection(conn, res.encode())
 }
 
-func handleGetCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleGetCommand(call respArray, conn net.Conn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
 		return
 	}
-	key, ok := call[1].(string)
+	key, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "key must be a string")
 		return
 	}
-	value, ok := store.get(key)
-	var res []byte
+	res, ok := store.get(string(key))
 	if !ok {
-		res = encodeBulkString(nil)
-	} else {
-		res = encode(value)
+		res = respNullBulkString{}
 	}
-	writeToConnection(conn, res)
+	writeToConnection(conn, res.encode())
 }
 
-func handleConfigCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleConfigCommand(call respArray, conn net.Conn, store *redisStore) {
 	if len(call) != 3 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
 	}
-	sub, ok := call[1].(string)
+	sub, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected a string subcommand to CONFIG command")
 		return
 	}
-	sub = strings.ToUpper(sub)
-	if sub != "GET" {
+	if strings.ToUpper(string(sub)) != "GET" {
 		fmt.Fprintln(os.Stderr, "invalid use of the CONFIG GET command")
 		return
 	}
-	param, ok := call[2].(string)
+	param, ok := call[2].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected a string param")
 		return
 	}
-	value, ok := store.getParam(param)
-	vals := []interface{}{&param}
+	value, ok := store.getParam(string(param))
+	var vals respArray = []respObject{param}
 	if !ok {
 		vals = append(vals, nil)
 	} else {
-		vals = append(vals, &value)
+		bulk_str := respBulkString(value)
+		vals = append(vals, bulk_str)
 	}
-	res := encode(vals)
-	writeToConnection(conn, res)
+	writeToConnection(conn, vals.encode())
 }
 
-func handleKeysCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleKeysCommand(call respArray, conn net.Conn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
 	}
 
-	search, ok := call[1].(string)
+	search, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "expected a string search parameter")
 	}
 
-	keys := store.getKeys(search)
-	res := encode(keys)
-	writeToConnection(conn, res)
+	keys := store.getKeys(string(search))
+	var res respArray = make([]respObject, len(keys))
+	for i := 0; i < len(keys); i++ {
+		res[i] = respBulkString(keys[i])
+	}
+	writeToConnection(conn, res.encode())
 
 }
 
-func handleInfoCommand(call []interface{}, conn net.Conn, store *redisStore) {
+func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
 		return
 	}
 
-	arg, ok := call[1].(string)
+	arg, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "expected a string argument for INFO")
 	}
@@ -187,6 +188,6 @@ func handleInfoCommand(call []interface{}, conn net.Conn, store *redisStore) {
 	}
 
 	info := strings.Join(strs, "\r\n")
-	res := encodeBulkString(&info)
-	writeToConnection(conn, res)
+	res := respBulkString(info)
+	writeToConnection(conn, res.encode())
 }

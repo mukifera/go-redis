@@ -6,36 +6,36 @@ import (
 )
 
 type redisStore struct {
-	dict   map[string]interface{}
+	dict   map[string]respObject
 	expiry map[interface{}]int64
 	params map[string]string
 	mu     sync.Mutex
 }
 
 func (s *redisStore) init() {
-	s.dict = make(map[string]interface{})
+	s.dict = make(map[string]respObject)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 }
 
-func (s *redisStore) set(key string, value interface{}) {
+func (s *redisStore) set(key string, value respObject) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 }
 
-func (s *redisStore) setWithExpiry(key string, value interface{}, expiry uint64) {
+func (s *redisStore) setWithExpiry(key string, value respObject, expiry uint64) {
 	s.setWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
 }
 
-func (s *redisStore) setWithAbsoluteExpiry(key string, value interface{}, expiry uint64) {
+func (s *redisStore) setWithAbsoluteExpiry(key string, value respObject, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 	s.expiry[key] = int64(expiry)
 }
 
-func (s *redisStore) get(key string) (interface{}, bool) {
+func (s *redisStore) get(key string) (respObject, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, in_dict := s.dict[key]

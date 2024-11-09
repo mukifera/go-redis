@@ -83,7 +83,7 @@ func handleConnection(conn net.Conn, store *redisStore) {
 
 	for {
 		response := decode(read)
-		call, ok := response.([]interface{})
+		call, ok := response.(respArray)
 		if !ok {
 			fmt.Fprintln(os.Stderr, "expected command as array")
 			continue
@@ -131,11 +131,12 @@ func generateRandomID(length int) string {
 }
 
 func generateCommand(strs ...string) []byte {
-	arr := make([]*string, len(strs))
+	arr := respArray(make([]respObject, len(strs)))
 	for i := 0; i < len(arr); i++ {
-		arr[i] = &strs[i]
+		bulk_str := respBulkString(strs[i])
+		arr[i] = &bulk_str
 	}
-	return encode(arr)
+	return arr.encode()
 }
 
 func performMasterHandshake(listening_port string, master_ip_port string) {
@@ -176,12 +177,12 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync)
 	raw := decode(read)
-	res, ok := raw.(string)
+	res, ok := raw.(respBulkString)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
 		os.Exit(1)
 	}
-	strs := strings.Split(res, " ")
+	strs := strings.Split(string(res), " ")
 	if len(strs) != 3 || strs[0] != "FULLRESYNC" || strs[2] != "0" {
 		fmt.Fprintf(os.Stderr, "malformed response to PSYNC command")
 		os.Exit(1)
@@ -193,6 +194,6 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 
 func waitForResponse(response string, in <-chan byte) bool {
 	actual := decode(in)
-	str, ok := actual.(string)
-	return ok && str == response
+	str, ok := actual.(respBulkString)
+	return ok && string(str) == response
 }

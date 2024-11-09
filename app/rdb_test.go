@@ -123,10 +123,10 @@ func TestReadRDBSet(t *testing.T) {
 		name       string
 		bytes      []byte
 		bytes_read uint64
-		set        map[string]struct{}
+		set        map[respObject]struct{}
 	}{
-		{name: "simple set", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, set: map[string]struct{}{"foo": struct{}{}, "bar": struct{}{}}},
-		{name: "empty set", bytes: []byte{0x00}, bytes_read: 1, set: map[string]struct{}{}},
+		{name: "simple set", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, set: createSet[respObject](respBulkString("foo"), respBulkString("bar"))},
+		{name: "empty set", bytes: []byte{0x00}, bytes_read: 1, set: createSet[respObject]()},
 	}
 
 	for _, test := range tests {
@@ -141,7 +141,7 @@ func TestReadRDBSet(t *testing.T) {
 	}
 }
 
-func equalSets(a map[string]struct{}, b map[string]struct{}) bool {
+func equalSets[T comparable](a map[T]struct{}, b map[T]struct{}) bool {
 	for key := range a {
 		if _, ok := b[key]; !ok {
 			return false

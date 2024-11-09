@@ -222,7 +222,7 @@ func readLengthEncodedInt(data []byte) (bytes_read uint8, integer uint32) {
 	return
 }
 
-func readKeyValue(data []byte) (bytes_read uint64, key string, value interface{}) {
+func readKeyValue(data []byte) (bytes_read uint64, key string, value respObject) {
 
 	data_type := data[0]
 
@@ -233,13 +233,16 @@ func readKeyValue(data []byte) (bytes_read uint64, key string, value interface{}
 
 	switch data_type {
 	case rdbValueTypes.STRING:
-		n, value = readEncodedString(data[bytes_read:])
+		n, str := readEncodedString(data[bytes_read:])
+		value = respBulkString(str)
 		bytes_read += n
 	case rdbValueTypes.LIST:
-		n, value = readRDBList(data[bytes_read:])
+		n, list := readRDBList(data[bytes_read:])
+		value = stringArrayToResp(list)
 		bytes_read += n
 	case rdbValueTypes.SET:
-		n, value = readRDBSet(data[bytes_read:])
+		n, set := readRDBSet(data[bytes_read:])
+		value = respSet(set)
 		bytes_read += n
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported key/value type\n")
@@ -265,11 +268,11 @@ func readRDBList(data []byte) (bytes_read uint64, list []string) {
 	return
 }
 
-func readRDBSet(data []byte) (bytes_read uint64, set map[string]struct{}) {
+func readRDBSet(data []byte) (bytes_read uint64, set map[respObject]struct{}) {
 	bytes_read, list := readRDBList(data)
-	set = make(map[string]struct{})
+	set = make(map[respObject]struct{})
 	for _, str := range list {
-		set[str] = struct{}{}
+		set[respBulkString(str)] = struct{}{}
 	}
 	return
 }

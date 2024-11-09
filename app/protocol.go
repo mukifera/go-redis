@@ -1,18 +1,135 @@
 package main
 
 import (
-	"errors"
 	"strconv"
 )
 
-func decode(in <-chan byte) interface{} {
+type respObject interface {
+	encode() []byte
+}
+
+type respSimpleString string
+type respSimpleError string
+type respInteger int
+type respBulkString string
+type respNullBulkString struct{}
+type respArray []respObject
+type respSet map[respObject]struct{}
+type respMap map[respObject]respObject
+type respBoolean bool
+
+func (r respSimpleString) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '+')
+	ret = append(ret, r...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func (r respSimpleError) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '-')
+	ret = append(ret, r...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func (r respInteger) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, ':')
+	if r < 0 {
+		ret = append(ret, '-')
+		r = -r
+	}
+	ret = append(ret, strconv.Itoa(int(r))...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func (r respBulkString) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '$')
+	ret = append(ret, strconv.Itoa(len(r))...)
+	ret = append(ret, "\r\n"...)
+	ret = append(ret, r...)
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func (r respNullBulkString) encode() []byte {
+	return []byte("$-1\r\n")
+}
+
+func (r respArray) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '*')
+	ret = append(ret, strconv.Itoa(len(r))...)
+	ret = append(ret, "\r\n"...)
+	for i := 0; i < len(r); i++ {
+		ret = append(ret, r[i].encode()...)
+	}
+	return ret
+}
+
+func (r respSet) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '~')
+	ret = append(ret, strconv.Itoa(len(r))...)
+	ret = append(ret, "\r\n"...)
+	for key := range r {
+		ret = append(ret, key.encode()...)
+	}
+	return ret
+}
+
+func createSet[T comparable](items ...T) map[T]struct{} {
+	ret := make(map[T]struct{})
+	for _, item := range items {
+		ret[item] = struct{}{}
+	}
+	return ret
+}
+
+func (r respBoolean) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '#')
+	if r {
+		ret = append(ret, 't')
+	} else {
+		ret = append(ret, 'f')
+	}
+	ret = append(ret, "\r\n"...)
+	return ret
+}
+
+func (r respMap) encode() []byte {
+	ret := make([]byte, 0)
+	ret = append(ret, '%')
+	ret = append(ret, strconv.Itoa(len(r))...)
+	ret = append(ret, "\r\n"...)
+	for key, value := range r {
+		ret = append(ret, key.encode()...)
+		ret = append(ret, value.encode()...)
+	}
+	return ret
+}
+
+func stringArrayToResp(arr []string) respArray {
+	var ret respArray = make([]respObject, len(arr))
+	for i := 0; i < len(arr); i++ {
+		ret[i] = respBulkString(arr[i])
+	}
+	return ret
+}
+
+func decode(in <-chan byte) respObject {
 
 	ch := <-in
 	switch ch {
 	case '+':
 		return decodeSimpleString(in)
 	case '-':
-		return errors.New(decodeSimpleString(in))
+		return respSimpleError(decodeSimpleString(in))
 	case ':':
 		return decodeInteger(in)
 	case '$':
@@ -46,7 +163,7 @@ func decode(in <-chan byte) interface{} {
 	return nil
 }
 
-func decodeSimpleString(in <-chan byte) string {
+func decodeSimpleString(in <-chan byte) respSimpleString {
 	buf := make([]byte, 0)
 	for {
 		if len(buf) > 1 && buf[len(buf)-2] == '\r' && buf[len(buf)-1] == '\n' {
@@ -54,10 +171,10 @@ func decodeSimpleString(in <-chan byte) string {
 		}
 		buf = append(buf, <-in)
 	}
-	return string(buf[:len(buf)-2])
+	return respSimpleString(string(buf[:len(buf)-2]))
 }
 
-func decodeInteger(in <-chan byte) int {
+func decodeInteger(in <-chan byte) respInteger {
 	negative := false
 	value := 0
 
@@ -82,44 +199,44 @@ func decodeInteger(in <-chan byte) int {
 	if negative {
 		value = -value
 	}
-	return value
+	return respInteger(value)
 }
 
-func decodeBulkString(in <-chan byte) string {
+func decodeBulkString(in <-chan byte) respBulkString {
 	length := decodeInteger(in)
 
 	if length == -1 {
 		return ""
 	}
 
-	return decodeSimpleString(in)
+	return respBulkString(decodeSimpleString(in))
 }
 
-func decodeArray(in <-chan byte) []interface{} {
+func decodeArray(in <-chan byte) respArray {
 	length := decodeInteger(in)
 
 	if length == -1 {
 		return nil
 	}
 
-	arr := make([]interface{}, length)
-	for i := 0; i < length; i++ {
+	arr := make([]respObject, length)
+	for i := 0; i < int(length); i++ {
 		arr[i] = decode(in)
 	}
 	return arr
 }
 
-func decodeBoolean(in <-chan byte) bool {
+func decodeBoolean(in <-chan byte) respBoolean {
 	ch := <-in
 	<-in
 	<-in
 	return ch == 't'
 }
 
-func decodeMap(in <-chan byte) map[interface{}]interface{} {
-	dict := make(map[interface{}]interface{})
+func decodeMap(in <-chan byte) respMap {
+	dict := make(map[respObject]respObject)
 	length := decodeInteger(in)
-	for i := 0; i < length; i++ {
+	for i := 0; i < int(length); i++ {
 		key := decode(in)
 		value := decode(in)
 		dict[key] = value
@@ -127,77 +244,12 @@ func decodeMap(in <-chan byte) map[interface{}]interface{} {
 	return dict
 }
 
-func decodeSet(in <-chan byte) map[interface{}]struct{} {
-	dict := make(map[interface{}]struct{})
+func decodeSet(in <-chan byte) respSet {
+	dict := make(map[respObject]struct{})
 	length := decodeInteger(in)
-	for i := 0; i < length; i++ {
+	for i := 0; i < int(length); i++ {
 		value := decode(in)
 		dict[value] = struct{}{}
 	}
 	return dict
-}
-
-func encode(value interface{}) []byte {
-	if value == nil {
-		return encodeBulkString(nil)
-	}
-	switch t := value.(type) {
-	case int:
-		return encodeInteger(t)
-	case string:
-		return encodeSimpleString(t)
-	case *string:
-		return encodeBulkString(t)
-	case []*string:
-		return encodeArray(t)
-	case []string:
-		return encodeArray(t)
-	case []interface{}:
-		return encodeArray(t)
-	}
-	return []byte{}
-}
-
-func encodeSimpleString(str string) []byte {
-	ret := make([]byte, 0)
-	ret = append(ret, '+')
-	ret = append(ret, str...)
-	ret = append(ret, "\r\n"...)
-	return ret
-}
-
-func encodeBulkString(str *string) []byte {
-	if str == nil {
-		return []byte("$-1\r\n")
-	}
-	ret := make([]byte, 0)
-	ret = append(ret, '$')
-	ret = append(ret, strconv.Itoa(len(*str))...)
-	ret = append(ret, "\r\n"...)
-	ret = append(ret, *str...)
-	ret = append(ret, "\r\n"...)
-	return ret
-}
-
-func encodeInteger(num int) []byte {
-	ret := make([]byte, 0)
-	ret = append(ret, ':')
-	if num < 0 {
-		ret = append(ret, '-')
-		num = -num
-	}
-	ret = append(ret, strconv.Itoa(num)...)
-	ret = append(ret, "\r\n"...)
-	return ret
-}
-
-func encodeArray[T any](arr []T) []byte {
-	ret := make([]byte, 0)
-	ret = append(ret, '*')
-	ret = append(ret, strconv.Itoa(len(arr))...)
-	ret = append(ret, "\r\n"...)
-	for i := 0; i < len(arr); i++ {
-		ret = append(ret, encode(arr[i])...)
-	}
-	return ret
 }
