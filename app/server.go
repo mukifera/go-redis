@@ -13,15 +13,31 @@ import (
 	"time"
 )
 
-func main() {
+type serverFlags struct {
+	dir        string
+	dbfilename string
+	port       string
+	replicaof  string
+}
 
+func main() {
 	dir_ptr := flag.String("dir", "", "the directory of the RDB config file")
 	dbfilename_ptr := flag.String("dbfilename", "", "the name of the RDB config file")
 	port_ptr := flag.String("port", "6379", "the port to run the server on")
 	replicaof_ptr := flag.String("replicaof", "", "indicate if the server is a replica of another. In the form of '<MASTER_HOST> <MASTER_PORT>'")
 	flag.Parse()
 
-	l, err := net.Listen("tcp", "0.0.0.0:"+*port_ptr)
+	startServer(serverFlags{
+		dir:        *dir_ptr,
+		dbfilename: *dbfilename_ptr,
+		port:       *port_ptr,
+		replicaof:  *replicaof_ptr,
+	})
+}
+
+func startServer(flags serverFlags) {
+
+	l, err := net.Listen("tcp", "0.0.0.0:"+flags.port)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "Failed to bind to port 6379")
 		os.Exit(1)
@@ -31,26 +47,18 @@ func main() {
 	var store *redisStore
 	store = new(redisStore)
 	store.init()
-	dir := ""
-	if dir_ptr != nil && *dir_ptr != "" {
-		dir = *dir_ptr
-	}
-	dbfilename := ""
-	if dbfilename_ptr != nil && *dbfilename_ptr != "" {
-		dbfilename = *dbfilename_ptr
-	}
-	rdb_file := filepath.Join(dir, dbfilename)
+	rdb_file := filepath.Join(flags.dir, flags.dbfilename)
 
 	store, err = readRDBFile(rdb_file)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		os.Exit(1)
 	}
-	store.setParam("dir", dir)
-	store.setParam("dbfilename", dbfilename)
+	store.setParam("dir", flags.dir)
+	store.setParam("dbfilename", flags.dbfilename)
 
-	if *replicaof_ptr != "" {
-		strs := strings.Split(*replicaof_ptr, " ")
+	if flags.replicaof != "" {
+		strs := strings.Split(flags.replicaof, " ")
 		if len(strs) != 2 {
 			fmt.Fprintf(os.Stderr, "malformed value for --replicaof flag")
 			os.Exit(1)
@@ -58,7 +66,7 @@ func main() {
 		ip_port := strings.Join(strs, ":")
 		store.setParam("replicaof", ip_port)
 
-		performMasterHandshake(*port_ptr, ip_port)
+		performMasterHandshake(flags.port, ip_port)
 
 	} else {
 		store.setParam("master_replid", generateRandomID(40))
