@@ -216,5 +216,13 @@ func handlePsyncCommand(conn net.Conn, store *redisStore) error {
 	}
 	res := respSimpleString(strings.Join(strs, " "))
 	writeToConnection(conn, res.encode())
+	sendCurrentState(conn)
 	return nil
+}
+
+func sendCurrentState(conn net.Conn) {
+	data := generateRDBFile(nil)
+	res := respBulkString(data).encode()
+	res = res[:len(res)-2]
+	writeToConnection(conn, res)
 }

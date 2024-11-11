@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"hash/crc64"
 	"os"
 )
 
@@ -275,4 +276,18 @@ func readRDBSet(data []byte) (bytes_read uint64, set map[respObject]struct{}) {
 		set[respBulkString(str)] = struct{}{}
 	}
 	return
+}
+
+func generateRDBFile(_ *redisStore) []byte {
+	data := make([]byte, 0)
+	data = append(data, "REDIS0011"...)
+	data = append(data, 0xFE, 00)
+	data = append(data, 0xFB, 0x00, 0x00)
+
+	var poly uint64 = 0xad93d23594c935a9
+	table := crc64.MakeTable(poly)
+	checksum := crc64.New(table).Sum(data)
+	data = append(data, 0xFF)
+	data = append(data, checksum...)
+	return data
 }
