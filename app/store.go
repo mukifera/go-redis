@@ -1,21 +1,24 @@
 package main
 
 import (
+	"net"
 	"sync"
 	"time"
 )
 
 type redisStore struct {
-	dict   map[string]respObject
-	expiry map[interface{}]int64
-	params map[string]string
-	mu     sync.Mutex
+	dict     map[string]respObject
+	expiry   map[interface{}]int64
+	params   map[string]string
+	replicas []net.Conn
+	mu       sync.Mutex
 }
 
 func (s *redisStore) init() {
 	s.dict = make(map[string]respObject)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
+	s.replicas = make([]net.Conn, 0)
 }
 
 func (s *redisStore) set(key string, value respObject) {
@@ -67,4 +70,10 @@ func (s *redisStore) getKeys(_ string) []string {
 		i++
 	}
 	return keys
+}
+
+func (s *redisStore) addReplica(conn net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.replicas = append(s.replicas, conn)
 }

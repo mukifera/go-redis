@@ -24,6 +24,7 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 		handleEchoCommand(call, conn)
 	case "SET":
 		handleSetCommand(call, conn, store)
+		propagateToReplicas(call, store)
 	case "GET":
 		handleGetCommand(call, conn, store)
 	case "CONFIG":
@@ -33,7 +34,7 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 	case "INFO":
 		handleInfoCommand(call, conn, store)
 	case "REPLCONF":
-		handleReplconfCommand(conn)
+		handleReplconfCommand(call, conn, store)
 	case "PSYNC":
 		handlePsyncCommand(conn, store)
 	default:
@@ -197,7 +198,19 @@ func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
 	writeToConnection(conn, res.encode())
 }
 
-func handleReplconfCommand(conn net.Conn) {
+func handleReplconfCommand(call respArray, conn net.Conn, store *redisStore) {
+	if len(call) < 2 {
+		fmt.Fprintln(os.Stderr, "invalid number of arguments to REPLCONF command")
+		return
+	}
+	sub, ok := call[1].(respBulkString)
+	if !ok {
+		fmt.Fprintf(os.Stderr, "expected a string subcommand for REPLCONF")
+		return
+	}
+	if sub == "listening-port" {
+		store.addReplica(conn)
+	}
 	res := respSimpleString("OK")
 	writeToConnection(conn, res.encode())
 }
@@ -225,4 +238,11 @@ func sendCurrentState(conn net.Conn) {
 	res := respBulkString(data).encode()
 	res = res[:len(res)-2]
 	writeToConnection(conn, res)
+}
+
+func propagateToReplicas(call respArray, store *redisStore) {
+	res := call.encode()
+	for _, conn := range store.replicas {
+		writeToConnection(conn, res)
+	}
 }
