@@ -114,6 +114,18 @@ func stringArrayToResp(arr []string) respArray {
 	return ret
 }
 
+func respToString(obj respObject) (string, bool) {
+	simple, ok := obj.(respSimpleString)
+	if ok {
+		return string(simple), true
+	}
+	bulk, ok := obj.(respBulkString)
+	if ok {
+		return string(bulk), true
+	}
+	return "", false
+}
+
 func decode(in <-chan byte) respObject {
 
 	ch := <-in

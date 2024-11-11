@@ -31,6 +31,8 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 		handleKeysCommand(call, conn, store)
 	case "INFO":
 		handleInfoCommand(call, conn, store)
+	case "REPLCONF":
+		handleReplconfCommand(conn)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
 	}
@@ -189,5 +191,10 @@ func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
 
 	info := strings.Join(strs, "\r\n")
 	res := respBulkString(info)
+	writeToConnection(conn, res.encode())
+}
+
+func handleReplconfCommand(conn net.Conn) {
+	res := respSimpleString("OK")
 	writeToConnection(conn, res.encode())
 }

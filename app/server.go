@@ -192,7 +192,7 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync)
 	raw := decode(read)
-	res, ok := raw.(respBulkString)
+	res, ok := respToString(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
 		os.Exit(1)
@@ -209,6 +209,6 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 
 func waitForResponse(response string, in <-chan byte) bool {
 	actual := decode(in)
-	str, ok := actual.(respBulkString)
+	str, ok := respToString(actual)
 	return ok && string(str) == response
 }
