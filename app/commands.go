@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -33,6 +34,8 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 		handleInfoCommand(call, conn, store)
 	case "REPLCONF":
 		handleReplconfCommand(conn)
+	case "PSYNC":
+		handlePsyncCommand(conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
 	}
@@ -197,4 +200,21 @@ func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
 func handleReplconfCommand(conn net.Conn) {
 	res := respSimpleString("OK")
 	writeToConnection(conn, res.encode())
+}
+
+func handlePsyncCommand(conn net.Conn, store *redisStore) error {
+	strs := make([]string, 3)
+	strs[0] = "FULLRESYNC"
+	ok := true
+	strs[1], ok = store.getParam("master_replid")
+	if !ok {
+		return errors.New("no master_replid found")
+	}
+	strs[2], ok = store.getParam("master_repl_offset")
+	if !ok {
+		return errors.New("no master_repl_offset found")
+	}
+	res := respSimpleString(strings.Join(strs, " "))
+	writeToConnection(conn, res.encode())
+	return nil
 }
