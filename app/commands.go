@@ -236,7 +236,7 @@ func handleReplconfCommand(call respArray, conn redisConn, store *redisStore) {
 		res = respSimpleString("OK").encode()
 
 	case "GETACK":
-		res = generateCommand("REPLCONF", "ACK", "0")
+		res = generateCommand("REPLCONF", "ACK", strconv.Itoa(conn.offset))
 
 	default:
 		res = respSimpleString("OK").encode()

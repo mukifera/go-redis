@@ -126,26 +126,29 @@ func respToString(obj respObject) (string, bool) {
 	return "", false
 }
 
-func decode(in <-chan byte) respObject {
+func decode(in <-chan byte) (n int, ret respObject) {
 
 	ch := <-in
 	switch ch {
 	case '+':
-		return decodeSimpleString(in)
+		n, ret = decodeSimpleString(in)
 	case '-':
-		return respSimpleError(decodeSimpleString(in))
+		var str respSimpleString
+		n, str = decodeSimpleString(in)
+		ret = respSimpleError(str)
 	case ':':
-		return decodeInteger(in)
+		n, ret = decodeInteger(in)
 	case '$':
-		return decodeBulkString(in)
+		n, ret = decodeBulkString(in)
 	case '*':
-		return decodeArray(in)
+		n, ret = decodeArray(in)
 	case '_':
 		<-in
 		<-in
-		return nil
+		n = 2
+		ret = nil
 	case '#':
-		return decodeBoolean(in)
+		n, ret = decodeBoolean(in)
 	// case ',':
 	// 	return decodeDouble(in)
 	// case '(':
@@ -155,32 +158,38 @@ func decode(in <-chan byte) respObject {
 	// case '=':
 	// 	return decodeVerbatimString(in)
 	case '%':
-		return decodeMap(in)
+		n, ret = decodeMap(in)
 	// case '|':
 	// 	return decodeAttribute(in)
 	case '~':
-		return decodeSet(in)
+		n, ret = decodeSet(in)
 		// case '>':
 		// 	return decodePush(in)
 
+	default:
+		return 0, nil
 	}
-	return nil
+
+	return n + 1, ret
 }
 
-func decodeSimpleString(in <-chan byte) respSimpleString {
+func decodeSimpleString(in <-chan byte) (int, respSimpleString) {
+	n := 0
 	buf := make([]byte, 0)
 	for {
 		if len(buf) > 1 && buf[len(buf)-2] == '\r' && buf[len(buf)-1] == '\n' {
 			break
 		}
 		buf = append(buf, <-in)
+		n++
 	}
-	return respSimpleString(string(buf[:len(buf)-2]))
+	return n, respSimpleString(string(buf[:len(buf)-2]))
 }
 
-func decodeInteger(in <-chan byte) respInteger {
+func decodeInteger(in <-chan byte) (int, respInteger) {
 	negative := false
 	value := 0
+	n := 0
 
 	ch := <-in
 	if ch == '-' {
@@ -188,9 +197,11 @@ func decodeInteger(in <-chan byte) respInteger {
 	} else if ch != '+' {
 		value = int(ch - '0')
 	}
+	n++
 
 	for {
 		ch = <-in
+		n++
 		if ch == '\r' {
 			break
 		}
@@ -199,61 +210,70 @@ func decodeInteger(in <-chan byte) respInteger {
 	}
 
 	<-in
+	n++
 
 	if negative {
 		value = -value
 	}
-	return respInteger(value)
+	return n, respInteger(value)
 }
 
-func decodeBulkString(in <-chan byte) respBulkString {
-	length := decodeInteger(in)
+func decodeBulkString(in <-chan byte) (int, respBulkString) {
+	n, length := decodeInteger(in)
 
 	if length == -1 {
-		return ""
+		return n, ""
 	}
 
-	return respBulkString(decodeSimpleString(in))
+	nn, str := decodeSimpleString(in)
+	n += nn
+
+	return n, respBulkString(str)
 }
 
-func decodeArray(in <-chan byte) respArray {
-	length := decodeInteger(in)
+func decodeArray(in <-chan byte) (int, respArray) {
+	n, length := decodeInteger(in)
 
 	if length == -1 {
-		return nil
+		return n, nil
 	}
 
 	arr := make([]respObject, length)
+	nn := 0
 	for i := 0; i < int(length); i++ {
-		arr[i] = decode(in)
+		nn, arr[i] = decode(in)
+		n += nn
 	}
-	return arr
+	return n, arr
 }
 
-func decodeBoolean(in <-chan byte) respBoolean {
+func decodeBoolean(in <-chan byte) (int, respBoolean) {
 	ch := <-in
 	<-in
 	<-in
-	return ch == 't'
+	return 3, ch == 't'
 }
 
-func decodeMap(in <-chan byte) respMap {
+func decodeMap(in <-chan byte) (int, respMap) {
 	dict := make(map[respObject]respObject)
-	length := decodeInteger(in)
+	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
-		key := decode(in)
-		value := decode(in)
+		nn, key := decode(in)
+		n += nn
+		nn, value := decode(in)
+		n += nn
 		dict[key] = value
 	}
-	return dict
+	return n, dict
 }
 
-func decodeSet(in <-chan byte) respSet {
+func decodeSet(in <-chan byte) (int, respSet) {
 	dict := make(map[respObject]struct{})
-	length := decodeInteger(in)
+	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
-		value := decode(in)
+		nn, value := decode(in)
+		n += nn
 		dict[value] = struct{}{}
 	}
-	return dict
+	return n, dict
 }

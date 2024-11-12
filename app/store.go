@@ -11,6 +11,7 @@ type redisConn struct {
 	byteChan chan byte
 	stopChan chan bool
 	ticker   *time.Ticker
+	offset   int
 }
 
 type redisStore struct {

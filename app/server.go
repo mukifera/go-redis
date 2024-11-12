@@ -96,6 +96,7 @@ func handleConnection(conn net.Conn, store *redisStore) {
 	var new_conn redisConn
 	new_conn.conn = conn
 	new_conn.byteChan = make(chan byte, 1<<14)
+	new_conn.offset = 0
 	go readFromConnection(new_conn)
 
 	acceptCommands(new_conn, store)
@@ -103,7 +104,7 @@ func handleConnection(conn net.Conn, store *redisStore) {
 
 func acceptCommands(conn redisConn, store *redisStore) {
 	for {
-		response := decode(conn.byteChan)
+		n, response := decode(conn.byteChan)
 		switch res := response.(type) {
 		case respArray:
 			handleCommand(res, conn, store)
@@ -113,6 +114,7 @@ func acceptCommands(conn redisConn, store *redisStore) {
 		default:
 			fmt.Fprintf(os.Stderr, "invalid command %v\n", response)
 		}
+		conn.offset += n
 	}
 }
 
@@ -166,6 +168,7 @@ func generateCommand(strs ...string) []byte {
 func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) redisConn {
 
 	var master_conn redisConn
+	master_conn.offset = 0
 
 	conn, err := net.Dial("tcp", master_ip_port)
 	if err != nil {
@@ -203,7 +206,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync)
-	raw := decode(master_conn.byteChan)
+	_, raw := decode(master_conn.byteChan)
 	res, ok := respToString(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
@@ -221,7 +224,8 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 		fmt.Fprintf(os.Stderr, "expected an RDB file\n")
 		os.Exit(1)
 	}
-	n := int(decodeInteger(master_conn.byteChan))
+	_, raw_int := decodeInteger(master_conn.byteChan)
+	n := int(raw_int)
 	for i := 0; i < n; i++ {
 		<-master_conn.byteChan
 	}
@@ -232,7 +236,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 }
 
 func waitForResponse(response string, in <-chan byte) bool {
-	actual := decode(in)
+	_, actual := decode(in)
 	str, ok := respToString(actual)
 	return ok && string(str) == response
 }
