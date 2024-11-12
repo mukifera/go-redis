@@ -67,7 +67,7 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 		ip_port := strings.Join(strs, ":")
 		store.setParam("replicaof", ip_port)
 
-		performMasterHandshake(flags.port, ip_port)
+		store.master = performMasterHandshake(flags.port, ip_port, store)
 
 	} else {
 		store.setParam("master_replid", generateRandomID(40))
@@ -96,14 +96,21 @@ func handleConnection(conn net.Conn, store *redisStore) {
 	read := make(chan byte, 1<<14)
 	go readFromConnection(conn, read)
 
+	acceptCommands(conn, read, store)
+}
+
+func acceptCommands(conn net.Conn, read <-chan byte, store *redisStore) {
 	for {
 		response := decode(read)
-		call, ok := response.(respArray)
-		if !ok {
-			fmt.Fprintln(os.Stderr, "expected command as array")
-			continue
+		switch res := response.(type) {
+		case respArray:
+			handleCommand(res, conn, store)
+		case respSimpleString, respBulkString:
+			call := []respObject{res}
+			handleCommand(call, conn, store)
+		default:
+			fmt.Fprintf(os.Stderr, "invalid command %v\n", response)
 		}
-		handleCommand(call, conn, store)
 	}
 }
 
@@ -154,7 +161,7 @@ func generateCommand(strs ...string) []byte {
 	return arr.encode()
 }
 
-func performMasterHandshake(listening_port string, master_ip_port string) {
+func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) net.Conn {
 
 	master_conn, err := net.Dial("tcp", master_ip_port)
 	if err != nil {
@@ -179,7 +186,7 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf)))
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
 	writeToConnection(master_conn, replconf)
@@ -187,7 +194,7 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf)))
 
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync)
@@ -203,8 +210,20 @@ func performMasterHandshake(listening_port string, master_ip_port string) {
 		os.Exit(1)
 	}
 
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync)))
 
+	if <-read != '$' {
+		fmt.Fprintf(os.Stderr, "expected an RDB file\n")
+		os.Exit(1)
+	}
+	n := int(decodeInteger(read))
+	for i := 0; i < n; i++ {
+		<-read
+	}
+
+	go acceptCommands(master_conn, read, store)
+
+	return master_conn
 }
 
 func waitForResponse(response string, in <-chan byte) bool {

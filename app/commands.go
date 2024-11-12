@@ -17,9 +17,11 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 		return
 	}
 
+	fmt.Printf("Received command %v\n", call)
+
 	switch strings.ToUpper(string(command)) {
 	case "PING":
-		handlePingCommand(conn)
+		handlePingCommand(conn, store)
 	case "ECHO":
 		handleEchoCommand(call, conn)
 	case "SET":
@@ -38,13 +40,15 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 	case "PSYNC":
 		handlePsyncCommand(conn, store)
 	default:
-		fmt.Fprintf(os.Stderr, "unknown command %s\n", command)
+		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
 }
 
-func handlePingCommand(conn net.Conn) {
+func handlePingCommand(conn net.Conn, store *redisStore) {
 	res := respSimpleString("PONG")
-	writeToConnection(conn, res.encode())
+	if conn != store.master {
+		writeToConnection(conn, res.encode())
+	}
 }
 
 func handleEchoCommand(call respArray, conn net.Conn) {
@@ -97,7 +101,9 @@ func handleSetCommand(call respArray, conn net.Conn, store *redisStore) {
 		store.set(string(key), call[2])
 	}
 	res := respSimpleString("OK")
-	writeToConnection(conn, res.encode())
+	if conn != store.master {
+		writeToConnection(conn, res.encode())
+	}
 }
 
 func handleGetCommand(call respArray, conn net.Conn, store *redisStore) {
@@ -114,7 +120,9 @@ func handleGetCommand(call respArray, conn net.Conn, store *redisStore) {
 	if !ok {
 		res = respNullBulkString{}
 	}
-	writeToConnection(conn, res.encode())
+	if conn != store.master {
+		writeToConnection(conn, res.encode())
+	}
 }
 
 func handleConfigCommand(call respArray, conn net.Conn, store *redisStore) {
@@ -209,6 +217,17 @@ func handleReplconfCommand(call respArray, conn net.Conn, store *redisStore) {
 		return
 	}
 	if sub == "listening-port" {
+		_, ok := respToString(call[2])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "invalid listening port")
+			return
+		}
+		_, ok = conn.RemoteAddr().(*net.TCPAddr)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "invalid TCP host")
+			return
+		}
+
 		store.addReplica(conn)
 	}
 	res := respSimpleString("OK")
@@ -243,6 +262,7 @@ func sendCurrentState(conn net.Conn) {
 func propagateToReplicas(call respArray, store *redisStore) {
 	res := call.encode()
 	for _, conn := range store.replicas {
+		fmt.Printf("Propagating %v to replica %v\n", call, conn.LocalAddr())
 		writeToConnection(conn, res)
 	}
 }

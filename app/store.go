@@ -11,6 +11,7 @@ type redisStore struct {
 	expiry   map[interface{}]int64
 	params   map[string]string
 	replicas []net.Conn
+	master   net.Conn
 	mu       sync.Mutex
 }
 
