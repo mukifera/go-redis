@@ -284,11 +284,11 @@ func handleWaitCommand(call respArray, conn redisConn, store *redisStore) {
 
 	_, ok = respToInt(call[1])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected numreplicas to be an integer")
+		fmt.Fprintln(os.Stderr, "expected timeout to be an integer")
 		return
 	}
 
-	res := respInteger(0)
+	res := respInteger(len(store.replicas))
 	writeToConnection(conn, res.encode())
 }
 
