@@ -39,16 +39,18 @@ func TestServerRespondsToPing(t *testing.T) {
 
 	time.Sleep(time.Millisecond * 200)
 
-	conn, err := net.Dial("tcp", "0.0.0.0:6379")
+	c, err := net.Dial("tcp", "0.0.0.0:6379")
 	if err != nil {
 		t.Fatalf("Cannot listen to port 8888: %v\n", err)
 	}
 
+	var conn redisConn
+	conn.conn = c
 	command := generateCommand("PING")
 	writeToConnection(conn, command)
 
 	buf := make([]byte, 7)
-	n, err := conn.Read(buf)
+	n, err := conn.conn.Read(buf)
 	if n != 7 || err != nil {
 		t.Fatalf("Invalid response to ping\n")
 	}
