@@ -126,6 +126,21 @@ func respToString(obj respObject) (string, bool) {
 	return "", false
 }
 
+func respToInt(obj respObject) (int, bool) {
+	integer, ok := obj.(respInteger)
+	if ok {
+		return int(integer), true
+	}
+	str, ok := respToString(obj)
+	if ok {
+		ret, err := strconv.Atoi(str)
+		if err == nil {
+			return ret, true
+		}
+	}
+	return 0, false
+}
+
 func decode(in <-chan byte) (n int, ret respObject) {
 
 	ch := <-in

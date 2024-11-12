@@ -40,6 +40,8 @@ func handleCommand(call respArray, conn redisConn, store *redisStore) {
 		handleReplconfCommand(call, conn, store)
 	case "PSYNC":
 		handlePsyncCommand(conn, store)
+	case "WAIT":
+		handleWaitCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -266,6 +268,28 @@ func handlePsyncCommand(conn redisConn, store *redisStore) error {
 	decode(conn.byteChan)
 
 	return nil
+}
+
+func handleWaitCommand(call respArray, conn redisConn, store *redisStore) {
+	if len(call) != 3 {
+		fmt.Fprintln(os.Stderr, "invalid number of arguments to WAIT command")
+		return
+	}
+
+	_, ok := respToInt(call[1])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "expected numreplicas to be an integer")
+		return
+	}
+
+	_, ok = respToInt(call[1])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "expected numreplicas to be an integer")
+		return
+	}
+
+	res := respInteger(0)
+	writeToConnection(conn, res.encode())
 }
 
 func sendCurrentState(conn redisConn) {
