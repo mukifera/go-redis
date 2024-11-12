@@ -93,15 +93,17 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 func handleConnection(conn net.Conn, store *redisStore) {
 	defer conn.Close()
 
-	read := make(chan byte, 1<<14)
-	go readFromConnection(conn, read)
+	var new_conn redisConn
+	new_conn.conn = conn
+	new_conn.byteChan = make(chan byte, 1<<14)
+	go readFromConnection(new_conn)
 
-	acceptCommands(conn, read, store)
+	acceptCommands(new_conn, store)
 }
 
-func acceptCommands(conn net.Conn, read <-chan byte, store *redisStore) {
+func acceptCommands(conn redisConn, store *redisStore) {
 	for {
-		response := decode(read)
+		response := decode(conn.byteChan)
 		switch res := response.(type) {
 		case respArray:
 			handleCommand(res, conn, store)
@@ -114,20 +116,20 @@ func acceptCommands(conn net.Conn, read <-chan byte, store *redisStore) {
 	}
 }
 
-func writeToConnection(conn net.Conn, data []byte) {
-	_, err := conn.Write(data)
+func writeToConnection(conn redisConn, data []byte) {
+	_, err := conn.conn.Write(data)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
 		return
 	}
 }
 
-func readFromConnection(conn net.Conn, out chan<- byte) {
-	defer close(out)
+func readFromConnection(conn redisConn) {
+	defer close(conn.byteChan)
 
 	for {
 		buf := make([]byte, 1024)
-		n, err := conn.Read(buf)
+		n, err := conn.conn.Read(buf)
 		if err == io.EOF {
 			continue
 		}
@@ -136,7 +138,7 @@ func readFromConnection(conn net.Conn, out chan<- byte) {
 			return
 		}
 		for i := 0; i < n; i++ {
-			out <- buf[i]
+			conn.byteChan <- buf[i]
 		}
 	}
 }
@@ -161,20 +163,23 @@ func generateCommand(strs ...string) []byte {
 	return arr.encode()
 }
 
-func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) net.Conn {
+func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) redisConn {
 
-	master_conn, err := net.Dial("tcp", master_ip_port)
+	var master_conn redisConn
+
+	conn, err := net.Dial("tcp", master_ip_port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not connect to master")
 		os.Exit(1)
 	}
+	master_conn.conn = conn
 
-	read := make(chan byte, 1<<14)
-	go readFromConnection(master_conn, read)
+	master_conn.byteChan = make(chan byte, 1<<14)
+	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")
 	writeToConnection(master_conn, ping)
-	if !waitForResponse("PONG", read) {
+	if !waitForResponse("PONG", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
 		os.Exit(1)
 	}
@@ -182,7 +187,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
 	writeToConnection(master_conn, replconf)
-	if !waitForResponse("OK", read) {
+	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
 	}
@@ -190,7 +195,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
 	writeToConnection(master_conn, replconf)
-	if !waitForResponse("OK", read) {
+	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
 	}
@@ -198,7 +203,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync)
-	raw := decode(read)
+	raw := decode(master_conn.byteChan)
 	res, ok := respToString(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
@@ -212,16 +217,16 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync)))
 
-	if <-read != '$' {
+	if <-master_conn.byteChan != '$' {
 		fmt.Fprintf(os.Stderr, "expected an RDB file\n")
 		os.Exit(1)
 	}
-	n := int(decodeInteger(read))
+	n := int(decodeInteger(master_conn.byteChan))
 	for i := 0; i < n; i++ {
-		<-read
+		<-master_conn.byteChan
 	}
 
-	go acceptCommands(master_conn, read, store)
+	go acceptCommands(master_conn, store)
 
 	return master_conn
 }

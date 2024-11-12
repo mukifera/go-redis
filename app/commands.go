@@ -7,9 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
-func handleCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleCommand(call respArray, conn redisConn, store *redisStore) {
 
 	command, ok := call[0].(respBulkString)
 	if !ok {
@@ -44,14 +45,14 @@ func handleCommand(call respArray, conn net.Conn, store *redisStore) {
 	}
 }
 
-func handlePingCommand(conn net.Conn, store *redisStore) {
+func handlePingCommand(conn redisConn, store *redisStore) {
 	res := respSimpleString("PONG")
-	if conn != store.master {
+	if conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleEchoCommand(call respArray, conn net.Conn) {
+func handleEchoCommand(call respArray, conn redisConn) {
 	key, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected command name as string")
@@ -61,7 +62,7 @@ func handleEchoCommand(call respArray, conn net.Conn) {
 	writeToConnection(conn, res.encode())
 }
 
-func handleSetCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleSetCommand(call respArray, conn redisConn, store *redisStore) {
 
 	if len(call) != 3 && len(call) != 5 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
@@ -101,12 +102,12 @@ func handleSetCommand(call respArray, conn net.Conn, store *redisStore) {
 		store.set(string(key), call[2])
 	}
 	res := respSimpleString("OK")
-	if conn != store.master {
+	if conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleGetCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleGetCommand(call respArray, conn redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
 		return
@@ -120,12 +121,12 @@ func handleGetCommand(call respArray, conn net.Conn, store *redisStore) {
 	if !ok {
 		res = respNullBulkString{}
 	}
-	if conn != store.master {
+	if conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleConfigCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleConfigCommand(call respArray, conn redisConn, store *redisStore) {
 	if len(call) != 3 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
@@ -155,7 +156,7 @@ func handleConfigCommand(call respArray, conn net.Conn, store *redisStore) {
 	writeToConnection(conn, vals.encode())
 }
 
-func handleKeysCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleKeysCommand(call respArray, conn redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
@@ -175,7 +176,7 @@ func handleKeysCommand(call respArray, conn net.Conn, store *redisStore) {
 
 }
 
-func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleInfoCommand(call respArray, conn redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
 		return
@@ -206,7 +207,7 @@ func handleInfoCommand(call respArray, conn net.Conn, store *redisStore) {
 	writeToConnection(conn, res.encode())
 }
 
-func handleReplconfCommand(call respArray, conn net.Conn, store *redisStore) {
+func handleReplconfCommand(call respArray, conn redisConn, store *redisStore) {
 	if len(call) < 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to REPLCONF command")
 		return
@@ -216,25 +217,34 @@ func handleReplconfCommand(call respArray, conn net.Conn, store *redisStore) {
 		fmt.Fprintf(os.Stderr, "expected a string subcommand for REPLCONF")
 		return
 	}
-	if sub == "listening-port" {
+
+	var res []byte
+	switch strings.ToUpper(string(sub)) {
+	case "LISTENING-PORT":
 		_, ok := respToString(call[2])
 		if !ok {
 			fmt.Fprintf(os.Stderr, "invalid listening port")
 			return
 		}
-		_, ok = conn.RemoteAddr().(*net.TCPAddr)
+		_, ok = conn.conn.RemoteAddr().(*net.TCPAddr)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "invalid TCP host")
 			return
 		}
 
 		store.addReplica(conn)
+		res = respSimpleString("OK").encode()
+
+	case "GETACK":
+		res = generateCommand("REPLCONF", "ACK", "0")
+
+	default:
+		res = respSimpleString("OK").encode()
 	}
-	res := respSimpleString("OK")
-	writeToConnection(conn, res.encode())
+	writeToConnection(conn, res)
 }
 
-func handlePsyncCommand(conn net.Conn, store *redisStore) error {
+func handlePsyncCommand(conn redisConn, store *redisStore) error {
 	strs := make([]string, 3)
 	strs[0] = "FULLRESYNC"
 	ok := true
@@ -249,10 +259,16 @@ func handlePsyncCommand(conn net.Conn, store *redisStore) error {
 	res := respSimpleString(strings.Join(strs, " "))
 	writeToConnection(conn, res.encode())
 	sendCurrentState(conn)
+
+	conn.ticker = time.NewTicker(5 * time.Second)
+	conn.stopChan = make(chan bool)
+	go sendAcksToReplica(conn)
+	decode(conn.byteChan)
+
 	return nil
 }
 
-func sendCurrentState(conn net.Conn) {
+func sendCurrentState(conn redisConn) {
 	data := generateRDBFile(nil)
 	res := respBulkString(data).encode()
 	res = res[:len(res)-2]
@@ -262,7 +278,20 @@ func sendCurrentState(conn net.Conn) {
 func propagateToReplicas(call respArray, store *redisStore) {
 	res := call.encode()
 	for _, conn := range store.replicas {
-		fmt.Printf("Propagating %v to replica %v\n", call, conn.LocalAddr())
+		fmt.Printf("Propagating %v to replica %v\n", call, conn.conn.LocalAddr())
 		writeToConnection(conn, res)
+	}
+}
+
+func sendAcksToReplica(conn redisConn) {
+	defer conn.ticker.Stop()
+	for {
+		select {
+		case <-conn.ticker.C:
+			res := generateCommand("REPLCONF", "GETACK", "*")
+			writeToConnection(conn, res)
+		case <-conn.stopChan:
+			return
+		}
 	}
 }

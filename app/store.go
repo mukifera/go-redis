@@ -6,12 +6,19 @@ import (
 	"time"
 )
 
+type redisConn struct {
+	conn     net.Conn
+	byteChan chan byte
+	stopChan chan bool
+	ticker   *time.Ticker
+}
+
 type redisStore struct {
 	dict     map[string]respObject
 	expiry   map[interface{}]int64
 	params   map[string]string
-	replicas []net.Conn
-	master   net.Conn
+	replicas []redisConn
+	master   redisConn
 	mu       sync.Mutex
 }
 
@@ -19,7 +26,7 @@ func (s *redisStore) init() {
 	s.dict = make(map[string]respObject)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
-	s.replicas = make([]net.Conn, 0)
+	s.replicas = make([]redisConn, 0)
 }
 
 func (s *redisStore) set(key string, value respObject) {
@@ -73,7 +80,7 @@ func (s *redisStore) getKeys(_ string) []string {
 	return keys
 }
 
-func (s *redisStore) addReplica(conn net.Conn) {
+func (s *redisStore) addReplica(conn redisConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.replicas = append(s.replicas, conn)
