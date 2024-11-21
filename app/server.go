@@ -102,12 +102,6 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 		n, response := decode(conn.byteChan)
 		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
 
-		if store.master != nil && conn.conn == store.master.conn {
-			conn.mu.Lock()
-			conn.offset += n
-			conn.mu.Unlock()
-		}
-
 		switch res := response.(type) {
 		case respArray:
 			handleCommand(res, conn, store)
@@ -116,6 +110,12 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 			handleCommand(call, conn, store)
 		default:
 			fmt.Fprintf(os.Stderr, "invalid command %v\n", response)
+		}
+
+		if store.master != nil && conn.conn == store.master.conn {
+			conn.mu.Lock()
+			conn.offset += n
+			conn.mu.Unlock()
 		}
 	}
 }
@@ -130,13 +130,7 @@ func writeToConnection(conn *redisConn, data []byte) {
 		}
 		current += n
 	}
-	if conn.relation == connRelationTypeEnum.REPLICA {
-		conn.mu.Lock()
-		conn.total_propagated += len(data)
-		fmt.Printf("sent %d bytes to replica %v: %s\n", len(data), conn.conn.RemoteAddr(), strconv.Quote(string(data)))
-		fmt.Printf("total_propagated = %d, offset = %d\n", conn.total_propagated, conn.offset)
-		conn.mu.Unlock()
-	} else {
+	if conn.relation != connRelationTypeEnum.REPLICA {
 		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.conn.RemoteAddr(), strconv.Quote(string(data)))
 	}
 }

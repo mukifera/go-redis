@@ -281,7 +281,7 @@ func handlePsyncCommand(conn *redisConn, store *redisStore) error {
 	conn.offset = 0
 	conn.mu.Unlock()
 
-	conn.ticker = time.NewTicker(2 * time.Second)
+	conn.ticker = time.NewTicker(200 * time.Millisecond)
 	conn.stopChan = make(chan bool)
 	go sendAcksToReplica(conn)
 
@@ -349,6 +349,12 @@ func propagateToReplicas(call respArray, store *redisStore) {
 	for _, conn := range store.replicas {
 		fmt.Printf("Propagating %v to replica %v\n", call, conn.conn.LocalAddr())
 		writeToConnection(conn, res)
+		conn.mu.Lock()
+		conn.total_propagated += len(res)
+		conn.expected_offset = conn.total_propagated
+		fmt.Printf("sent %d bytes to replica %v: %s\n", len(res), conn.conn.RemoteAddr(), strconv.Quote(string(res)))
+		fmt.Printf("total_propagated = %d, offset = %d\n", conn.total_propagated, conn.offset)
+		conn.mu.Unlock()
 	}
 }
 
@@ -371,7 +377,8 @@ func sendAckToReplica(conn *redisConn) {
 		return
 	}
 	conn.expected_offset = conn.total_propagated
-	conn.mu.Unlock()
 	res := generateCommand("REPLCONF", "GETACK", "*")
 	writeToConnection(conn, res)
+	conn.total_propagated += len(res)
+	conn.mu.Unlock()
 }
