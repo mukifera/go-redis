@@ -6,28 +6,58 @@ import (
 	"time"
 )
 
+type connRelationType byte
+
+var connRelationTypeEnum = struct {
+	NORMAL  connRelationType
+	MASTER  connRelationType
+	REPLICA connRelationType
+}{
+	NORMAL:  0,
+	MASTER:  1,
+	REPLICA: 2,
+}
+
 type redisConn struct {
-	conn     net.Conn
-	byteChan chan byte
-	stopChan chan bool
-	ticker   *time.Ticker
-	offset   int
+	conn             net.Conn
+	byteChan         chan byte
+	stopChan         chan bool
+	ticker           *time.Ticker
+	offset           int
+	expected_offset  int
+	total_propagated int
+	relation         connRelationType
+	mu               sync.Mutex
 }
 
 type redisStore struct {
 	dict     map[string]respObject
 	expiry   map[interface{}]int64
 	params   map[string]string
-	replicas []redisConn
-	master   redisConn
+	replicas []*redisConn
+	master   *redisConn
 	mu       sync.Mutex
+}
+
+func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
+	return &redisConn{
+		conn:             conn,
+		byteChan:         make(chan byte, 1<<14),
+		stopChan:         make(chan bool),
+		ticker:           nil,
+		offset:           0,
+		expected_offset:  0,
+		total_propagated: 0,
+		relation:         relation_type,
+		mu:               sync.Mutex{},
+	}
 }
 
 func (s *redisStore) init() {
 	s.dict = make(map[string]respObject)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
-	s.replicas = make([]redisConn, 0)
+	s.replicas = make([]*redisConn, 0)
 }
 
 func (s *redisStore) set(key string, value respObject) {
@@ -81,8 +111,9 @@ func (s *redisStore) getKeys(_ string) []string {
 	return keys
 }
 
-func (s *redisStore) addReplica(conn redisConn) {
+func (s *redisStore) addReplica(conn *redisConn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.replicas = append(s.replicas, conn)
+	conn.relation = connRelationTypeEnum.REPLICA
 }

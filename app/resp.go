@@ -182,7 +182,7 @@ func decode(in <-chan byte) (n int, ret respObject) {
 		// 	return decodePush(in)
 
 	default:
-		return 0, nil
+		return 1, nil
 	}
 
 	return n + 1, ret

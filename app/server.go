@@ -92,19 +92,22 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 
 func handleConnection(conn net.Conn, store *redisStore) {
 	defer conn.Close()
-
-	var new_conn redisConn
-	new_conn.conn = conn
-	new_conn.byteChan = make(chan byte, 1<<14)
-	new_conn.offset = 0
+	new_conn := newRedisConn(conn, connRelationTypeEnum.NORMAL)
 	go readFromConnection(new_conn)
-
 	acceptCommands(new_conn, store)
 }
 
-func acceptCommands(conn redisConn, store *redisStore) {
+func acceptCommands(conn *redisConn, store *redisStore) {
 	for {
 		n, response := decode(conn.byteChan)
+		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
+
+		if store.master != nil && conn.conn == store.master.conn {
+			conn.mu.Lock()
+			conn.offset += n
+			conn.mu.Unlock()
+		}
+
 		switch res := response.(type) {
 		case respArray:
 			handleCommand(res, conn, store)
@@ -114,19 +117,31 @@ func acceptCommands(conn redisConn, store *redisStore) {
 		default:
 			fmt.Fprintf(os.Stderr, "invalid command %v\n", response)
 		}
-		conn.offset += n
 	}
 }
 
-func writeToConnection(conn redisConn, data []byte) {
-	_, err := conn.conn.Write(data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
-		return
+func writeToConnection(conn *redisConn, data []byte) {
+	current := 0
+	for current < len(data) {
+		n, err := conn.conn.Write(data[current:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
+			return
+		}
+		current += n
+	}
+	if conn.relation == connRelationTypeEnum.REPLICA {
+		conn.mu.Lock()
+		conn.total_propagated += len(data)
+		fmt.Printf("sent %d bytes to replica %v: %s\n", len(data), conn.conn.RemoteAddr(), strconv.Quote(string(data)))
+		fmt.Printf("total_propagated = %d, offset = %d\n", conn.total_propagated, conn.offset)
+		conn.mu.Unlock()
+	} else {
+		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.conn.RemoteAddr(), strconv.Quote(string(data)))
 	}
 }
 
-func readFromConnection(conn redisConn) {
+func readFromConnection(conn *redisConn) {
 	defer close(conn.byteChan)
 
 	for {
@@ -139,6 +154,7 @@ func readFromConnection(conn redisConn) {
 			fmt.Fprintf(os.Stderr, "Failed to read from connection: %v\n", err)
 			return
 		}
+		fmt.Printf("read %d bytes from %v: %s\n", n, conn.conn.RemoteAddr(), strconv.Quote(string(buf[:n])))
 		for i := 0; i < n; i++ {
 			conn.byteChan <- buf[i]
 		}
@@ -165,19 +181,15 @@ func generateCommand(strs ...string) []byte {
 	return arr.encode()
 }
 
-func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) redisConn {
-
-	var master_conn redisConn
-	master_conn.offset = 0
+func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) *redisConn {
 
 	conn, err := net.Dial("tcp", master_ip_port)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "could not connect to master")
 		os.Exit(1)
 	}
-	master_conn.conn = conn
 
-	master_conn.byteChan = make(chan byte, 1<<14)
+	master_conn := newRedisConn(conn, connRelationTypeEnum.MASTER)
 	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")

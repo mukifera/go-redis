@@ -44,8 +44,7 @@ func TestServerRespondsToPing(t *testing.T) {
 		t.Fatalf("Cannot listen to port 8888: %v\n", err)
 	}
 
-	var conn redisConn
-	conn.conn = c
+	conn := newRedisConn(c, connRelationTypeEnum.NORMAL)
 	command := generateCommand("PING")
 	writeToConnection(conn, command)
 

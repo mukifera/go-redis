@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-func handleCommand(call respArray, conn redisConn, store *redisStore) {
+func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 
-	command, ok := call[0].(respBulkString)
+	command, ok := respToString(call[0])
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected command name as string")
 		return
@@ -47,14 +47,14 @@ func handleCommand(call respArray, conn redisConn, store *redisStore) {
 	}
 }
 
-func handlePingCommand(conn redisConn, store *redisStore) {
+func handlePingCommand(conn *redisConn, store *redisStore) {
 	res := respSimpleString("PONG")
-	if conn.conn != store.master.conn {
+	if store.master == nil || conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleEchoCommand(call respArray, conn redisConn) {
+func handleEchoCommand(call respArray, conn *redisConn) {
 	key, ok := call[1].(respBulkString)
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected command name as string")
@@ -64,7 +64,7 @@ func handleEchoCommand(call respArray, conn redisConn) {
 	writeToConnection(conn, res.encode())
 }
 
-func handleSetCommand(call respArray, conn redisConn, store *redisStore) {
+func handleSetCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	if len(call) != 3 && len(call) != 5 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
@@ -104,12 +104,12 @@ func handleSetCommand(call respArray, conn redisConn, store *redisStore) {
 		store.set(string(key), call[2])
 	}
 	res := respSimpleString("OK")
-	if conn.conn != store.master.conn {
+	if store.master == nil || conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleGetCommand(call respArray, conn redisConn, store *redisStore) {
+func handleGetCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
 		return
@@ -123,12 +123,12 @@ func handleGetCommand(call respArray, conn redisConn, store *redisStore) {
 	if !ok {
 		res = respNullBulkString{}
 	}
-	if conn.conn != store.master.conn {
+	if store.master == nil || conn.conn != store.master.conn {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleConfigCommand(call respArray, conn redisConn, store *redisStore) {
+func handleConfigCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) != 3 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
@@ -158,7 +158,7 @@ func handleConfigCommand(call respArray, conn redisConn, store *redisStore) {
 	writeToConnection(conn, vals.encode())
 }
 
-func handleKeysCommand(call respArray, conn redisConn, store *redisStore) {
+func handleKeysCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
 		return
@@ -178,7 +178,7 @@ func handleKeysCommand(call respArray, conn redisConn, store *redisStore) {
 
 }
 
-func handleInfoCommand(call respArray, conn redisConn, store *redisStore) {
+func handleInfoCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) != 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
 		return
@@ -209,7 +209,7 @@ func handleInfoCommand(call respArray, conn redisConn, store *redisStore) {
 	writeToConnection(conn, res.encode())
 }
 
-func handleReplconfCommand(call respArray, conn redisConn, store *redisStore) {
+func handleReplconfCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) < 2 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to REPLCONF command")
 		return
@@ -238,7 +238,22 @@ func handleReplconfCommand(call respArray, conn redisConn, store *redisStore) {
 		res = respSimpleString("OK").encode()
 
 	case "GETACK":
+		conn.mu.Lock()
 		res = generateCommand("REPLCONF", "ACK", strconv.Itoa(conn.offset))
+		fmt.Printf("offset = %d\n", conn.offset)
+		conn.mu.Unlock()
+
+	case "ACK":
+		num, ok := respToInt(call[2])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "invalid response to ACK")
+			return
+		}
+		conn.mu.Lock()
+		conn.offset = num
+		fmt.Printf("offset for replica %v is %d\n", conn.conn.RemoteAddr(), conn.offset)
+		conn.mu.Unlock()
+		return
 
 	default:
 		res = respSimpleString("OK").encode()
@@ -246,7 +261,7 @@ func handleReplconfCommand(call respArray, conn redisConn, store *redisStore) {
 	writeToConnection(conn, res)
 }
 
-func handlePsyncCommand(conn redisConn, store *redisStore) error {
+func handlePsyncCommand(conn *redisConn, store *redisStore) error {
 	strs := make([]string, 3)
 	strs[0] = "FULLRESYNC"
 	ok := true
@@ -261,38 +276,68 @@ func handlePsyncCommand(conn redisConn, store *redisStore) error {
 	res := respSimpleString(strings.Join(strs, " "))
 	writeToConnection(conn, res.encode())
 	sendCurrentState(conn)
+	conn.mu.Lock()
+	conn.total_propagated = 0
+	conn.offset = 0
+	conn.mu.Unlock()
 
-	conn.ticker = time.NewTicker(5 * time.Second)
+	conn.ticker = time.NewTicker(2 * time.Second)
 	conn.stopChan = make(chan bool)
 	go sendAcksToReplica(conn)
-	decode(conn.byteChan)
 
 	return nil
 }
 
-func handleWaitCommand(call respArray, conn redisConn, store *redisStore) {
+func handleWaitCommand(call respArray, conn *redisConn, store *redisStore) {
 	if len(call) != 3 {
 		fmt.Fprintln(os.Stderr, "invalid number of arguments to WAIT command")
 		return
 	}
 
-	_, ok := respToInt(call[1])
+	numreplicas, ok := respToInt(call[1])
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected numreplicas to be an integer")
 		return
 	}
 
-	_, ok = respToInt(call[1])
+	timeout, ok := respToInt(call[2])
 	if !ok {
 		fmt.Fprintln(os.Stderr, "expected timeout to be an integer")
 		return
 	}
 
-	res := respInteger(len(store.replicas))
+	for _, replica := range store.replicas {
+		sendAckToReplica(replica)
+	}
+
+	timer := time.After(time.Duration(timeout * int(time.Millisecond)))
+	replicatation_count := 0
+	timed_out := false
+	update_replication_count := func() {
+		replicatation_count = 0
+		for _, replica := range store.replicas {
+			replica.mu.Lock()
+			if replica.expected_offset == replica.offset {
+				replicatation_count++
+			}
+			replica.mu.Unlock()
+		}
+	}
+	for replicatation_count < numreplicas && !timed_out {
+		select {
+		case <-timer:
+			timed_out = true
+		default:
+			update_replication_count()
+		}
+	}
+	update_replication_count()
+
+	res := respInteger(replicatation_count)
 	writeToConnection(conn, res.encode())
 }
 
-func sendCurrentState(conn redisConn) {
+func sendCurrentState(conn *redisConn) {
 	data := generateRDBFile(nil)
 	res := respBulkString(data).encode()
 	res = res[:len(res)-2]
@@ -307,15 +352,26 @@ func propagateToReplicas(call respArray, store *redisStore) {
 	}
 }
 
-func sendAcksToReplica(conn redisConn) {
+func sendAcksToReplica(conn *redisConn) {
 	defer conn.ticker.Stop()
 	for {
 		select {
 		case <-conn.ticker.C:
-			res := generateCommand("REPLCONF", "GETACK", "*")
-			writeToConnection(conn, res)
+			sendAckToReplica(conn)
 		case <-conn.stopChan:
 			return
 		}
 	}
+}
+
+func sendAckToReplica(conn *redisConn) {
+	conn.mu.Lock()
+	if conn.offset == conn.expected_offset {
+		conn.mu.Unlock()
+		return
+	}
+	conn.expected_offset = conn.total_propagated
+	conn.mu.Unlock()
+	res := generateCommand("REPLCONF", "GETACK", "*")
+	writeToConnection(conn, res)
 }
