@@ -117,3 +117,16 @@ func (s *redisStore) addReplica(conn *redisConn) {
 	s.replicas = append(s.replicas, conn)
 	conn.relation = connRelationTypeEnum.REPLICA
 }
+
+func (s *redisStore) typeOfValue(key string) string {
+	value, ok := s.get(key)
+	if !ok {
+		return "none"
+	}
+	switch value.(type) {
+	case respSimpleString, respBulkString:
+		return "string"
+	default:
+		return "unknown"
+	}
+}

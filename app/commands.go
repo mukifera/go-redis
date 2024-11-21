@@ -42,6 +42,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handlePsyncCommand(conn, store)
 	case "WAIT":
 		handleWaitCommand(call, conn, store)
+	case "TYPE":
+		handleTypeCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -334,6 +336,23 @@ func handleWaitCommand(call respArray, conn *redisConn, store *redisStore) {
 	update_replication_count()
 
 	res := respInteger(replicatation_count)
+	writeToConnection(conn, res.encode())
+}
+
+func handleTypeCommand(call respArray, conn *redisConn, store *redisStore) {
+	if len(call) != 2 {
+		fmt.Fprintln(os.Stderr, "invalid number of arguments to TYPE command")
+		return
+	}
+
+	key, ok := respToString(call[1])
+	if !ok {
+		fmt.Fprintf(os.Stderr, "expected a string value for key")
+		return
+	}
+
+	value_type := store.typeOfValue(key)
+	res := respSimpleString(value_type)
 	writeToConnection(conn, res.encode())
 }
 
