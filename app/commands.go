@@ -386,56 +386,11 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	top_id := "0-0"
-	if len(stream) != 0 {
-		top_id = stream[len(stream)-1].id
-	}
-
-	id_split := strings.Split(id, "-")
-	if len(id_split) != 2 {
-		fmt.Fprintf(os.Stderr, "invalid id format")
-		return
-	}
-
-	id_ms, err := strconv.Atoi(id_split[0])
+	id, err := processStreamID(stream, id)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "id ms: %v", err)
+		res := respSimpleError(err.Error())
+		writeToConnection(conn, res.encode())
 		return
-	}
-
-	if id_split[1] == "*" {
-
-		top_split := strings.Split(top_id, "-")
-		top_ms, _ := strconv.Atoi(top_split[0])
-		top_seq, _ := strconv.Atoi(top_split[1])
-
-		if id_ms < top_ms {
-			res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-			writeToConnection(conn, res.encode())
-			return
-		} else if id_ms == top_ms {
-			id = id_split[0] + "-" + strconv.Itoa(top_seq+1)
-		} else {
-			id = id_split[0] + "-0"
-		}
-
-	} else {
-		_, err := strconv.Atoi(id_split[1])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "id seq: %v", err)
-			return
-		}
-
-		if id == "0-0" {
-			res := respSimpleError("ERR The ID specified in XADD must be greater than 0-0")
-			writeToConnection(conn, res.encode())
-			return
-		} else if compareStreamIDs(id, top_id) != 1 {
-			res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-			writeToConnection(conn, res.encode())
-			return
-		}
-
 	}
 
 	data := make(map[string]respObject)
@@ -458,6 +413,60 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	res := respBulkString(id)
 	writeToConnection(conn, res.encode())
+}
+
+func processStreamID(stream respStream, id string) (string, error) {
+
+	if id == "*" {
+		current_timestamp := time.Now().UnixMilli()
+		return strconv.Itoa(int(current_timestamp)) + "-0", nil
+	}
+
+	top_id := "0-0"
+	if len(stream) != 0 {
+		top_id = stream[len(stream)-1].id
+	}
+
+	id_split := strings.Split(id, "-")
+	if len(id_split) != 2 {
+		return "", fmt.Errorf("invalid id format")
+	}
+
+	id_ms, err := strconv.Atoi(id_split[0])
+	if err != nil {
+		return "", fmt.Errorf("ERR The ID %s does not have a valid timestamp", id)
+	}
+
+	if id_split[1] == "*" {
+
+		top_split := strings.Split(top_id, "-")
+		top_ms, _ := strconv.Atoi(top_split[0])
+		top_seq, _ := strconv.Atoi(top_split[1])
+
+		if id_ms < top_ms {
+			return "", fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+		}
+		if id_ms == top_ms {
+			id = id_split[0] + "-" + strconv.Itoa(top_seq+1)
+		} else {
+			id = id_split[0] + "-0"
+		}
+
+		return id, nil
+	}
+
+	_, err = strconv.Atoi(id_split[1])
+	if err != nil {
+		return "", fmt.Errorf("ERR The ID %s does not have a valid sequence number", id)
+	}
+
+	if id == "0-0" {
+		return "", fmt.Errorf("ERR The ID specified in XADD must be greater than 0-0")
+	} else if compareStreamIDs(id, top_id) != 1 {
+		return "", fmt.Errorf("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+	}
+
+	return id, nil
 }
 
 func compareStreamIDs(a string, b string) int {
