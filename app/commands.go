@@ -44,6 +44,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleWaitCommand(call, conn, store)
 	case "TYPE":
 		handleTypeCommand(call, conn, store)
+	case "XADD":
+		handleXaddCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -353,6 +355,56 @@ func handleTypeCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	value_type := store.typeOfValue(key)
 	res := respSimpleString(value_type)
+	writeToConnection(conn, res.encode())
+}
+
+func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
+	if len(call) < 3 {
+		fmt.Fprintln(os.Stderr, "invalid number of arguments to XADD command")
+		return
+	}
+
+	key, ok := respToString(call[1])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "expected a string stream key")
+		return
+	}
+
+	raw_stream, ok := store.get(key)
+	stream := respStream{}
+	if ok {
+		stream, ok = raw_stream.(respStream)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "key has a non stream value type")
+			return
+		}
+	}
+
+	id, ok := respToString(call[2])
+	if !ok {
+		fmt.Fprintln(os.Stderr, "expected a string entry id")
+		return
+	}
+
+	data := make(map[string]respObject)
+	if (len(call)-3)%2 != 0 {
+		fmt.Fprintf(os.Stderr, "expected a list of key/value pairs")
+		return
+	}
+
+	for i := 3; i < len(call); i += 2 {
+		data_key, ok := respToString(call[i])
+		if !ok {
+			fmt.Fprintf(os.Stderr, "expected stream entry keys to be strings")
+			return
+		}
+		data[data_key] = call[i+1]
+	}
+
+	stream.addEntry(id, data)
+	store.set(key, stream)
+
+	res := respBulkString(id)
 	writeToConnection(conn, res.encode())
 }
 

@@ -17,6 +17,10 @@ type respArray []respObject
 type respSet map[respObject]struct{}
 type respMap map[respObject]respObject
 type respBoolean bool
+type respStream []struct {
+	id   string
+	data map[string]respObject
+}
 
 func (r respSimpleString) encode() []byte {
 	ret := make([]byte, 0)
@@ -104,6 +108,20 @@ func (r respMap) encode() []byte {
 		ret = append(ret, value.encode()...)
 	}
 	return ret
+}
+
+func (r respStream) encode() []byte {
+	return nil
+}
+
+func (r *respStream) addEntry(id string, data map[string]respObject) {
+	*r = append(*r, struct {
+		id   string
+		data map[string]respObject
+	}{
+		id:   id,
+		data: data,
+	})
 }
 
 func stringArrayToResp(arr []string) respArray {
