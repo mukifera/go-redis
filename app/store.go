@@ -126,7 +126,7 @@ func (s *redisStore) typeOfValue(key string) string {
 	switch value.(type) {
 	case respSimpleString, respBulkString:
 		return "string"
-	case respStream:
+	case respStream, *respStream:
 		return "stream"
 	default:
 		return "unknown"

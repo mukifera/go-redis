@@ -2,6 +2,7 @@ package main
 
 import (
 	"strconv"
+	"sync"
 )
 
 type respObject interface {
@@ -17,9 +18,12 @@ type respArray []respObject
 type respSet map[respObject]struct{}
 type respMap map[respObject]respObject
 type respBoolean bool
-type respStream []struct {
-	id   string
-	data map[string]respObject
+type respStream struct {
+	mu      sync.Mutex
+	entries []struct {
+		id   string
+		data map[string]respObject
+	}
 }
 
 func (r respSimpleString) encode() []byte {
@@ -115,7 +119,7 @@ func (r respStream) encode() []byte {
 }
 
 func (r *respStream) addEntry(id string, data map[string]respObject) {
-	*r = append(*r, struct {
+	r.entries = append(r.entries, struct {
 		id   string
 		data map[string]respObject
 	}{

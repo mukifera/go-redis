@@ -375,9 +375,9 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 	}
 
 	raw_stream, ok := store.get(key)
-	stream := respStream{}
+	stream := &respStream{}
 	if ok {
-		stream, ok = raw_stream.(respStream)
+		stream, ok = raw_stream.(*respStream)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "key has a non stream value type")
 			return
@@ -412,7 +412,9 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 		data[data_key] = call[i+1]
 	}
 
+	stream.mu.Lock()
 	stream.addEntry(id, data)
+	stream.mu.Unlock()
 	store.set(key, stream)
 
 	res := respBulkString(id)
@@ -439,12 +441,15 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 		writeToConnection(conn, res.encode())
 		return
 	}
-	stream, ok := stream_raw.(respStream)
+	stream, ok := stream_raw.(*respStream)
 	if !ok {
 		res := respSimpleError("ERR key does not hold a stream value")
 		writeToConnection(conn, res.encode())
 		return
 	}
+
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
 
 	from_id, ok := respToString(call[2])
 	if !ok {
@@ -469,7 +474,7 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	var to_index int
 	if to_id == "+" {
-		to_index = len(stream) - 1
+		to_index = len(stream.entries) - 1
 	} else {
 		to_index = streamUpperBound(stream, to_id)
 	}
@@ -477,10 +482,10 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 	res := respArray{}
 	for i := from_index; i <= to_index; i++ {
 		entry := respArray{}
-		entry = append(entry, respBulkString(stream[i].id))
+		entry = append(entry, respBulkString(stream.entries[i].id))
 
 		data := respArray{}
-		for k, v := range stream[i].data {
+		for k, v := range stream.entries[i].data {
 			data = append(data, respBulkString(k))
 			data = append(data, v)
 		}
@@ -499,18 +504,40 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	num_of_streams := (len(call) - 2) / 2
+	keys_and_ids := call[2:]
+	sub, ok := respToString(call[1])
+	var timer <-chan time.Time
 
-	res := respArray{}
+	is_blocking := ok && sub == "block"
+
+	if is_blocking {
+		keys_and_ids = call[4:]
+
+		timeout, ok := respToInt(call[2])
+		if !ok {
+			res := respSimpleError("ERR expected timeout to be a number")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
+		timer = time.After(time.Duration(timeout) * time.Millisecond)
+	}
+
+	num_of_streams := len(keys_and_ids) / 2
+
+	keys := make([]string, 0)
+	streams := make([]*respStream, 0)
+	ids := make([]string, 0)
+
 	for i := 0; i < num_of_streams; i++ {
-		key, ok := respToString(call[i+2])
+		key, ok := respToString(keys_and_ids[i])
 		if !ok {
 			res := respSimpleError("ERR expected a string for stream key")
 			writeToConnection(conn, res.encode())
 			return
 		}
 
-		id, ok := respToString(call[i+num_of_streams+2])
+		id, ok := respToString(keys_and_ids[i+num_of_streams])
 		if !ok {
 			res := respSimpleError("ERR expected a string for stream key")
 			writeToConnection(conn, res.encode())
@@ -523,48 +550,121 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 			writeToConnection(conn, res.encode())
 			return
 		}
-		stream, ok := stream_raw.(respStream)
+		stream, ok := stream_raw.(*respStream)
 		if !ok {
 			res := respSimpleError("ERR key does not hold a stream value")
 			writeToConnection(conn, res.encode())
 			return
 		}
 
-		from_index := streamLowerBound(stream, id)
-		if from_index < len(stream) && stream[from_index].id == id {
-			from_index++
-		}
+		keys = append(keys, key)
+		streams = append(streams, stream)
+		ids = append(ids, id)
 
-		stream_read := respArray{}
-		stream_read = append(stream_read, respBulkString(key))
-		entries := respArray{}
-		for j := from_index; j < len(stream); j++ {
-			entry := respArray{}
-			entry = append(entry, respBulkString(stream[j].id))
+	}
 
-			data := respArray{}
-			for k, v := range stream[j].data {
-				data = append(data, respBulkString(k))
-				data = append(data, v)
-			}
-
-			entry = append(entry, data)
-			entries = append(entries, entry)
-		}
-		stream_read = append(stream_read, entries)
-
-		res = append(res, stream_read)
+	var res respObject
+	if is_blocking {
+		res = blockStreamsRead(keys, streams, ids, timer)
+	} else {
+		res = readFromStreams(keys, streams, ids)
 	}
 
 	writeToConnection(conn, res.encode())
 }
 
-func streamLowerBound(stream respStream, id string) int {
+func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
+	for {
+		select {
+		case <-timer:
+			fmt.Println("hi")
+			return respNullBulkString{}
+		default:
+			reads := respArray{}
+			for i := 0; i < len(streams); i++ {
+				key := keys[i]
+				stream := streams[i]
+				id := ids[i]
+
+				entries := readStreamEntries(stream, id)
+
+				if len(entries) == 0 {
+					continue
+				}
+
+				stream_read := respArray{}
+				stream_read = append(stream_read, respBulkString(key))
+				stream_read = append(stream_read, entries)
+
+				reads = append(reads, stream_read)
+			}
+
+			if len(reads) != 0 {
+				return reads
+			}
+		}
+	}
+}
+
+func readFromStreams(keys []string, streams []*respStream, ids []string) respArray {
+	reads := respArray{}
+
+	for i := 0; i < len(streams); i++ {
+		key := keys[i]
+		stream := streams[i]
+		id := ids[i]
+
+		read := readFromStream(key, stream, id)
+
+		reads = append(reads, read)
+	}
+
+	return reads
+}
+
+func readFromStream(key string, stream *respStream, id string) respArray {
+	entries := readStreamEntries(stream, id)
+
+	stream_read := respArray{}
+	stream_read = append(stream_read, respBulkString(key))
+	stream_read = append(stream_read, entries)
+
+	return stream_read
+}
+
+func readStreamEntries(stream *respStream, id string) respArray {
+	stream.mu.Lock()
+	defer stream.mu.Unlock()
+
+	from_index := streamLowerBound(stream, id)
+	if from_index < len(stream.entries) && stream.entries[from_index].id == id {
+		from_index++
+	}
+
+	entries := respArray{}
+	for j := from_index; j < len(stream.entries); j++ {
+		entry := respArray{}
+		entry = append(entry, respBulkString(stream.entries[j].id))
+
+		data := respArray{}
+		for k, v := range stream.entries[j].data {
+			data = append(data, respBulkString(k))
+			data = append(data, v)
+		}
+
+		entry = append(entry, data)
+		entries = append(entries, entry)
+	}
+
+	return entries
+}
+
+func streamLowerBound(stream *respStream, id string) int {
 	low := -1
-	high := len(stream)
+	high := len(stream.entries)
 	for low+1 < high {
 		mid := (low + high) / 2
-		if compareStreamIDs(id, stream[mid].id) != 1 {
+		if compareStreamIDs(id, stream.entries[mid].id) != 1 {
 			high = mid
 		} else {
 			low = mid
@@ -573,12 +673,12 @@ func streamLowerBound(stream respStream, id string) int {
 	return high
 }
 
-func streamUpperBound(stream respStream, id string) int {
+func streamUpperBound(stream *respStream, id string) int {
 	low := -1
-	high := len(stream)
+	high := len(stream.entries)
 	for low+1 < high {
 		mid := (low + high) / 2
-		if compareStreamIDs(id, stream[mid].id) != -1 {
+		if compareStreamIDs(id, stream.entries[mid].id) != -1 {
 			low = mid
 		} else {
 			high = mid
@@ -587,7 +687,7 @@ func streamUpperBound(stream respStream, id string) int {
 	return low
 }
 
-func processStreamID(stream respStream, id string) (string, error) {
+func processStreamID(stream *respStream, id string) (string, error) {
 
 	if id == "*" {
 		current_timestamp := time.Now().UnixMilli()
@@ -595,8 +695,8 @@ func processStreamID(stream respStream, id string) (string, error) {
 	}
 
 	top_id := "0-0"
-	if len(stream) != 0 {
-		top_id = stream[len(stream)-1].id
+	if len(stream.entries) != 0 {
+		top_id = stream.entries[len(stream.entries)-1].id
 	}
 
 	id_split := strings.Split(id, "-")
