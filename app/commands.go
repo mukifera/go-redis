@@ -458,10 +458,19 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	from_index := streamLowerBound(stream, from_id)
-	to_index := streamUpperBound(stream, to_id)
+	var from_index int
+	if from_id == "-" {
+		from_index = 0
+	} else {
+		from_index = streamLowerBound(stream, from_id)
+	}
 
-	fmt.Println(from_index, to_index)
+	var to_index int
+	if from_id == "+" {
+		to_index = len(stream) - 1
+	} else {
+		to_index = streamUpperBound(stream, to_id)
+	}
 
 	res := respArray{}
 	for i := from_index; i <= to_index; i++ {
