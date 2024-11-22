@@ -46,6 +46,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleTypeCommand(call, conn, store)
 	case "XADD":
 		handleXaddCommand(call, conn, store)
+	case "XRANGE":
+		handleXrangeCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -413,6 +415,98 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	res := respBulkString(id)
 	writeToConnection(conn, res.encode())
+}
+
+func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
+	if len(call) != 4 {
+		res := respSimpleError("ERR invalid number of arguments to XRANGE command")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	key, ok := respToString(call[1])
+	if !ok {
+		res := respSimpleError("ERR expected a string key")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	stream_raw, ok := store.get(key)
+	if !ok {
+		res := respSimpleError("ERR key does not exist in store")
+		writeToConnection(conn, res.encode())
+		return
+	}
+	stream, ok := stream_raw.(respStream)
+	if !ok {
+		res := respSimpleError("ERR key does not hold a stream value")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	from_id, ok := respToString(call[2])
+	if !ok {
+		res := respSimpleError("ERR the start argument is not a valid string")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	to_id, ok := respToString(call[3])
+	if !ok {
+		res := respSimpleError("ERR the end argument is not a valid string")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	from_index := streamLowerBound(stream, from_id)
+	to_index := streamUpperBound(stream, to_id)
+
+	fmt.Println(from_index, to_index)
+
+	res := respArray{}
+	for i := from_index; i <= to_index; i++ {
+		entry := respArray{}
+		entry = append(entry, respBulkString(stream[i].id))
+
+		data := respArray{}
+		for k, v := range stream[i].data {
+			data = append(data, respBulkString(k))
+			data = append(data, v)
+		}
+
+		entry = append(entry, data)
+		res = append(res, entry)
+	}
+
+	writeToConnection(conn, res.encode())
+}
+
+func streamLowerBound(stream respStream, id string) int {
+	low := -1
+	high := len(stream)
+	for low+1 < high {
+		mid := (low + high) / 2
+		if compareStreamIDs(id, stream[mid].id) != 1 {
+			high = mid
+		} else {
+			low = mid
+		}
+	}
+	return high
+}
+
+func streamUpperBound(stream respStream, id string) int {
+	low := -1
+	high := len(stream)
+	for low+1 < high {
+		mid := (low + high) / 2
+		if compareStreamIDs(id, stream[mid].id) != -1 {
+			low = mid
+		} else {
+			high = mid
+		}
+	}
+	return low
 }
 
 func processStreamID(stream respStream, id string) (string, error) {
