@@ -48,6 +48,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleXaddCommand(call, conn, store)
 	case "XRANGE":
 		handleXrangeCommand(call, conn, store)
+	case "XREAD":
+		handleXreadCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -485,6 +487,73 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 
 		entry = append(entry, data)
 		res = append(res, entry)
+	}
+
+	writeToConnection(conn, res.encode())
+}
+
+func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
+	if len(call) < 4 || len(call)%2 != 0 {
+		res := respSimpleError("ERR invalid number of arguments to XREAD command")
+		writeToConnection(conn, res.encode())
+		return
+	}
+
+	num_of_streams := (len(call) - 2) / 2
+
+	res := respArray{}
+	for i := 0; i < num_of_streams; i++ {
+		key, ok := respToString(call[i+2])
+		if !ok {
+			res := respSimpleError("ERR expected a string for stream key")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
+		id, ok := respToString(call[i+num_of_streams+2])
+		if !ok {
+			res := respSimpleError("ERR expected a string for stream key")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
+		stream_raw, ok := store.get(key)
+		if !ok {
+			res := respSimpleError("ERR key does not exist in store")
+			writeToConnection(conn, res.encode())
+			return
+		}
+		stream, ok := stream_raw.(respStream)
+		if !ok {
+			res := respSimpleError("ERR key does not hold a stream value")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
+		from_index := streamLowerBound(stream, id)
+		if from_index < len(stream) && stream[from_index].id == id {
+			from_index++
+		}
+
+		stream_read := respArray{}
+		stream_read = append(stream_read, respBulkString(key))
+		entries := respArray{}
+		for j := from_index; j < len(stream); j++ {
+			entry := respArray{}
+			entry = append(entry, respBulkString(stream[j].id))
+
+			data := respArray{}
+			for k, v := range stream[j].data {
+				data = append(data, respBulkString(k))
+				data = append(data, v)
+			}
+
+			entry = append(entry, data)
+			entries = append(entries, entry)
+		}
+		stream_read = append(stream_read, entries)
+
+		res = append(res, stream_read)
 	}
 
 	writeToConnection(conn, res.encode())
