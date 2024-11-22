@@ -520,7 +520,11 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 			return
 		}
 
-		timer = time.After(time.Duration(timeout) * time.Millisecond)
+		if timeout == 0 {
+			timer = nil
+		} else {
+			timer = time.After(time.Duration(timeout) * time.Millisecond)
+		}
 	}
 
 	num_of_streams := len(keys_and_ids) / 2
