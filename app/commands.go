@@ -561,6 +561,12 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 			return
 		}
 
+		if id == "$" {
+			stream.mu.Lock()
+			id = stream.entries[len(stream.entries)-1].id
+			stream.mu.Unlock()
+		}
+
 		keys = append(keys, key)
 		streams = append(streams, stream)
 		ids = append(ids, id)
