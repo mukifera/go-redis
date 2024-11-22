@@ -386,26 +386,14 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	top_id := []string{"0", "0"}
+	top_id := "0-0"
 	if len(stream) != 0 {
-		top_id = strings.Split(stream[len(stream)-1].id, "-")
+		top_id = stream[len(stream)-1].id
 	}
 
 	id_split := strings.Split(id, "-")
 	if len(id_split) != 2 {
-		fmt.Fprintf(os.Stderr, "expected an explicit id")
-		return
-	}
-
-	top_ms, err := strconv.Atoi(top_id[0])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "top id ms: %v", err)
-		return
-	}
-
-	top_seq, err := strconv.Atoi(top_id[1])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "top id seq: %v", err)
+		fmt.Fprintf(os.Stderr, "invalid id format")
 		return
 	}
 
@@ -415,24 +403,39 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	id_seq, err := strconv.Atoi(id_split[1])
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "id seq: %v", err)
-		return
-	}
+	if id_split[1] == "*" {
 
-	if id == "0-0" {
-		res := respSimpleError("ERR The ID specified in XADD must be greater than 0-0")
-		writeToConnection(conn, res.encode())
-		return
-	} else if id_ms < top_ms {
-		res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-		writeToConnection(conn, res.encode())
-		return
-	} else if id_ms == top_ms && id_seq <= top_seq {
-		res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
-		writeToConnection(conn, res.encode())
-		return
+		top_split := strings.Split(top_id, "-")
+		top_ms, _ := strconv.Atoi(top_split[0])
+		top_seq, _ := strconv.Atoi(top_split[1])
+
+		if id_ms < top_ms {
+			res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			writeToConnection(conn, res.encode())
+			return
+		} else if id_ms == top_ms {
+			id = id_split[0] + "-" + strconv.Itoa(top_seq+1)
+		} else {
+			id = id_split[0] + "-0"
+		}
+
+	} else {
+		_, err := strconv.Atoi(id_split[1])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "id seq: %v", err)
+			return
+		}
+
+		if id == "0-0" {
+			res := respSimpleError("ERR The ID specified in XADD must be greater than 0-0")
+			writeToConnection(conn, res.encode())
+			return
+		} else if compareStreamIDs(id, top_id) != 1 {
+			res := respSimpleError("ERR The ID specified in XADD is equal or smaller than the target stream top item")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
 	}
 
 	data := make(map[string]respObject)
@@ -455,6 +458,30 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	res := respBulkString(id)
 	writeToConnection(conn, res.encode())
+}
+
+func compareStreamIDs(a string, b string) int {
+	if a == b {
+		return 0
+	}
+	a_split := strings.Split(a, "-")
+	b_split := strings.Split(b, "-")
+
+	a_ms, _ := strconv.Atoi(a_split[0])
+	a_seq, _ := strconv.Atoi(a_split[1])
+	b_ms, _ := strconv.Atoi(b_split[0])
+	b_seq, _ := strconv.Atoi(b_split[1])
+
+	if a_ms == b_ms {
+		if a_seq < b_seq {
+			return -1
+		}
+		return 1
+	}
+	if a_ms < b_ms {
+		return -1
+	}
+	return 1
 }
 
 func sendCurrentState(conn *redisConn) {
