@@ -466,7 +466,7 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 	}
 
 	var to_index int
-	if from_id == "+" {
+	if to_id == "+" {
 		to_index = len(stream) - 1
 	} else {
 		to_index = streamUpperBound(stream, to_id)
