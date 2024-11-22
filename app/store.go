@@ -31,13 +31,12 @@ type redisConn struct {
 }
 
 type redisStore struct {
-	dict           map[string]respObject
-	expiry         map[interface{}]int64
-	params         map[string]string
-	replicas       []*redisConn
-	master         *redisConn
-	current_stream string
-	mu             sync.Mutex
+	dict     map[string]respObject
+	expiry   map[interface{}]int64
+	params   map[string]string
+	replicas []*redisConn
+	master   *redisConn
+	mu       sync.Mutex
 }
 
 func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
@@ -59,7 +58,6 @@ func (s *redisStore) init() {
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 	s.replicas = make([]*redisConn, 0)
-	s.current_stream = ""
 }
 
 func (s *redisStore) set(key string, value respObject) {
