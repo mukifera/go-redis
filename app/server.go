@@ -169,13 +169,13 @@ func generateRandomID(length int) string {
 	return sb.String()
 }
 
-func generateCommand(strs ...string) []byte {
+func generateCommand(strs ...string) respArray {
 	arr := respArray(make([]respObject, len(strs)))
 	for i := 0; i < len(arr); i++ {
 		bulk_str := respBulkString(strs[i])
 		arr[i] = &bulk_str
 	}
-	return arr.encode()
+	return arr
 }
 
 func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) *redisConn {
@@ -190,31 +190,31 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")
-	writeToConnection(master_conn, ping)
+	writeToConnection(master_conn, ping.encode())
 	if !waitForResponse("PONG", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping.encode())))
 
 	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
-	writeToConnection(master_conn, replconf)
+	writeToConnection(master_conn, replconf.encode())
 	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.encode())))
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
-	writeToConnection(master_conn, replconf)
+	writeToConnection(master_conn, replconf.encode())
 	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.encode())))
 
 	psync := generateCommand("PSYNC", "?", "-1")
-	writeToConnection(master_conn, psync)
+	writeToConnection(master_conn, psync.encode())
 	_, raw := decode(master_conn.byteChan)
 	res, ok := respToString(raw)
 	if !ok {
@@ -227,7 +227,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 		os.Exit(1)
 	}
 
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync)))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync.encode())))
 
 	if <-master_conn.byteChan != '$' {
 		fmt.Fprintf(os.Stderr, "expected an RDB file\n")

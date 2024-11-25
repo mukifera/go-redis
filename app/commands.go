@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -9,6 +8,29 @@ import (
 	"strings"
 	"time"
 )
+
+type commandHandlerFunc func(respArray, *redisConn, *redisStore) respObject
+type commandHandlerFuncs map[string]commandHandlerFunc
+
+var handlers commandHandlerFuncs = commandHandlerFuncs{
+	"PING":     handlePingCommand,
+	"ECHO":     handleEchoCommand,
+	"SET":      handleSetCommand,
+	"GET":      handleGetCommand,
+	"CONFIG":   handleConfigCommand,
+	"KEYS":     handleKeysCommand,
+	"INFO":     handleInfoCommand,
+	"REPLCONF": handleReplconfCommand,
+	"PSYNC":    handlePsyncCommand,
+	"WAIT":     handleWaitCommand,
+	"TYPE":     handleTypeCommand,
+	"XADD":     handleXaddCommand,
+	"XRANGE":   handleXrangeCommand,
+	"XREAD":    handleXreadCommand,
+	"INCR":     handleIncrCommand,
+	"MULTI":    handleMultiCommand,
+	"EXEC":     handleExecCommand,
+}
 
 func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 
@@ -33,146 +55,106 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	fmt.Printf("Received command %v\n", call)
 
-	switch strings.ToUpper(string(command)) {
-	case "PING":
-		handlePingCommand(conn, store)
-	case "ECHO":
-		handleEchoCommand(call, conn)
-	case "SET":
-		handleSetCommand(call, conn, store)
-		propagateToReplicas(call, store)
-	case "GET":
-		handleGetCommand(call, conn, store)
-	case "CONFIG":
-		handleConfigCommand(call, conn, store)
-	case "KEYS":
-		handleKeysCommand(call, conn, store)
-	case "INFO":
-		handleInfoCommand(call, conn, store)
-	case "REPLCONF":
-		handleReplconfCommand(call, conn, store)
-	case "PSYNC":
-		handlePsyncCommand(conn, store)
-	case "WAIT":
-		handleWaitCommand(call, conn, store)
-	case "TYPE":
-		handleTypeCommand(call, conn, store)
-	case "XADD":
-		handleXaddCommand(call, conn, store)
-	case "XRANGE":
-		handleXrangeCommand(call, conn, store)
-	case "XREAD":
-		handleXreadCommand(call, conn, store)
-	case "INCR":
-		handleIncrCommand(call, conn, store)
-	case "MULTI":
-		handleMultiCommand(call, conn, store)
-	case "EXEC":
-		handleExecCommand(call, conn, store)
-	default:
+	handler, ok := handlers[command]
+	if !ok {
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
+		return
 	}
-}
 
-func handlePingCommand(conn *redisConn, store *redisStore) {
-	res := respSimpleString("PONG")
-	if store.master == nil || conn.conn != store.master.conn {
+	res := handler(call, conn, store)
+	if res != nil {
 		writeToConnection(conn, res.encode())
 	}
 }
 
-func handleEchoCommand(call respArray, conn *redisConn) {
-	key, ok := call[1].(respBulkString)
-	if !ok {
-		fmt.Fprintln(os.Stderr, "expected command name as string")
-		return
+func handlePingCommand(_ respArray, conn *redisConn, store *redisStore) respObject {
+	if store.master == nil || conn.conn != store.master.conn {
+		return respSimpleString("PONG")
 	}
-	res := respBulkString(key)
-	writeToConnection(conn, res.encode())
+	return nil
 }
 
-func handleSetCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleEchoCommand(call respArray, conn *redisConn, _ *redisStore) respObject {
+	key, ok := call[1].(respBulkString)
+	if !ok {
+		return respSimpleError("expected command name as string")
+	}
+	return respBulkString(key)
+}
+
+func handleSetCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 
 	if len(call) != 3 && len(call) != 5 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to SET command")
-		return
+		return respSimpleError("invalid number of arguments to SET command")
 	}
 	var err error
 	var expiry uint64
 	key, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "key must be a string")
-		return
+		return respSimpleError("key must be a string")
 	}
 	value, ok := call[2].(respBulkString)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "value must be a string")
+		return respSimpleError("value must be a string")
 	}
 	if len(call) == 5 {
 		flag, ok := call[3].(respBulkString)
 		if !ok {
-			fmt.Fprintln(os.Stderr, "expected flag to be a string")
-			return
+			return respSimpleError("expected flag to be a string")
 		}
 		if strings.ToUpper(string(flag)) == "PX" {
 			expiry_str, ok := call[4].(respBulkString)
 			if !ok {
-				fmt.Fprintln(os.Stderr, "expected an expiry value")
-				return
+				return respSimpleError("expected an expiry value")
 			}
 			expiry, err = strconv.ParseUint(string(expiry_str), 10, 64)
 			if err != nil {
-				fmt.Fprintf(os.Stderr, "expected expiry value to be an integer: %v\n", err)
-				return
+				return respSimpleError(fmt.Sprintf("expected expiry value to be an integer: %v\n", err))
 			}
 		}
 		store.setWithExpiry(string(key), value, expiry)
 	} else {
 		store.set(string(key), call[2])
 	}
-	res := respSimpleString("OK")
+
 	if store.master == nil || conn.conn != store.master.conn {
-		writeToConnection(conn, res.encode())
+		return respSimpleString("OK")
 	}
+	return nil
 }
 
-func handleGetCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleGetCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 2 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to GET command")
-		return
+		return respSimpleError("invalid number of arguments to GET command")
 	}
 	key, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "key must be a string")
-		return
+		return respSimpleError("key must be a string")
 	}
 	res, ok := store.get(string(key))
 	if !ok {
 		res = respNullBulkString{}
 	}
 	if store.master == nil || conn.conn != store.master.conn {
-		writeToConnection(conn, res.encode())
+		return res
 	}
+	return nil
 }
 
-func handleConfigCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleConfigCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 3 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
-		return
+		return respSimpleError("invalid number of arguments to CONFIG command")
 	}
 	sub, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected a string subcommand to CONFIG command")
-		return
+		return respSimpleError("expected a string subcommand to CONFIG command")
 	}
 	if strings.ToUpper(string(sub)) != "GET" {
-		fmt.Fprintln(os.Stderr, "invalid use of the CONFIG GET command")
-		return
+		return respSimpleError("invalid use of the CONFIG GET command")
 	}
 	param, ok := call[2].(respBulkString)
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected a string param")
-		return
+		return respSimpleError("expected a string param")
 	}
 	value, ok := store.getParam(string(param))
 	var vals respArray = []respObject{param}
@@ -182,18 +164,17 @@ func handleConfigCommand(call respArray, conn *redisConn, store *redisStore) {
 		bulk_str := respBulkString(value)
 		vals = append(vals, bulk_str)
 	}
-	writeToConnection(conn, vals.encode())
+	return vals
 }
 
-func handleKeysCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleKeysCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 2 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to CONFIG command")
-		return
+		return respSimpleError("invalid number of arguments to CONFIG command")
 	}
 
 	search, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "expected a string search parameter")
+		return respSimpleError("expected a string search parameter")
 	}
 
 	keys := store.getKeys(string(search))
@@ -201,22 +182,20 @@ func handleKeysCommand(call respArray, conn *redisConn, store *redisStore) {
 	for i := 0; i < len(keys); i++ {
 		res[i] = respBulkString(keys[i])
 	}
-	writeToConnection(conn, res.encode())
-
+	return res
 }
 
-func handleInfoCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleInfoCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 2 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to INFO command")
-		return
+		return respSimpleError("invalid number of arguments to INFO command")
 	}
 
 	arg, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "expected a string argument for INFO")
+		return respSimpleError("expected a string argument for INFO")
 	}
 	if arg != "replication" {
-		return
+		return nil
 	}
 
 	role := "master"
@@ -233,36 +212,32 @@ func handleInfoCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	info := strings.Join(strs, "\r\n")
 	res := respBulkString(info)
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleReplconfCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleReplconfCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) < 2 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to REPLCONF command")
-		return
+		return respSimpleError("invalid number of arguments to REPLCONF command")
 	}
 	sub, ok := call[1].(respBulkString)
 	if !ok {
-		fmt.Fprintf(os.Stderr, "expected a string subcommand for REPLCONF")
-		return
+		return respSimpleError("expected a string subcommand for REPLCONF")
 	}
 
-	var res []byte
+	var res respObject
 	switch strings.ToUpper(string(sub)) {
 	case "LISTENING-PORT":
 		_, ok := respToString(call[2])
 		if !ok {
-			fmt.Fprintf(os.Stderr, "invalid listening port")
-			return
+			return respSimpleError("invalid listening port")
 		}
 		_, ok = conn.conn.RemoteAddr().(*net.TCPAddr)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "invalid TCP host")
-			return
+			return respSimpleError("invalid TCP host")
 		}
 
 		store.addReplica(conn)
-		res = respSimpleString("OK").encode()
+		res = respSimpleString("OK")
 
 	case "GETACK":
 		conn.mu.Lock()
@@ -273,32 +248,31 @@ func handleReplconfCommand(call respArray, conn *redisConn, store *redisStore) {
 	case "ACK":
 		num, ok := respToInt(call[2])
 		if !ok {
-			fmt.Fprintf(os.Stderr, "invalid response to ACK")
-			return
+			return respSimpleError("invalid response to ACK")
 		}
 		conn.mu.Lock()
 		conn.offset = num
 		fmt.Printf("offset for replica %v is %d\n", conn.conn.RemoteAddr(), conn.offset)
 		conn.mu.Unlock()
-		return
+		return nil
 
 	default:
-		res = respSimpleString("OK").encode()
+		res = respSimpleString("OK")
 	}
-	writeToConnection(conn, res)
+	return res
 }
 
-func handlePsyncCommand(conn *redisConn, store *redisStore) error {
+func handlePsyncCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	strs := make([]string, 3)
 	strs[0] = "FULLRESYNC"
 	ok := true
 	strs[1], ok = store.getParam("master_replid")
 	if !ok {
-		return errors.New("no master_replid found")
+		return respSimpleError("no master_replid found")
 	}
 	strs[2], ok = store.getParam("master_repl_offset")
 	if !ok {
-		return errors.New("no master_repl_offset found")
+		return respSimpleError("no master_repl_offset found")
 	}
 	res := respSimpleString(strings.Join(strs, " "))
 	writeToConnection(conn, res.encode())
@@ -315,22 +289,19 @@ func handlePsyncCommand(conn *redisConn, store *redisStore) error {
 	return nil
 }
 
-func handleWaitCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleWaitCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 3 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to WAIT command")
-		return
+		return respSimpleError("invalid number of arguments to WAIT command")
 	}
 
 	numreplicas, ok := respToInt(call[1])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected numreplicas to be an integer")
-		return
+		return respSimpleError("expected numreplicas to be an integer")
 	}
 
 	timeout, ok := respToInt(call[2])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected timeout to be an integer")
-		return
+		return respSimpleError("expected timeout to be an integer")
 	}
 
 	for _, replica := range store.replicas {
@@ -361,36 +332,32 @@ func handleWaitCommand(call respArray, conn *redisConn, store *redisStore) {
 	update_replication_count()
 
 	res := respInteger(replicatation_count)
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleTypeCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleTypeCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 2 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to TYPE command")
-		return
+		return respSimpleError("invalid number of arguments to TYPE command")
 	}
 
 	key, ok := respToString(call[1])
 	if !ok {
-		fmt.Fprintf(os.Stderr, "expected a string value for key")
-		return
+		return respSimpleError("expected a string value for key")
 	}
 
 	value_type := store.typeOfValue(key)
 	res := respSimpleString(value_type)
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) < 3 {
-		fmt.Fprintln(os.Stderr, "invalid number of arguments to XADD command")
-		return
+		return respSimpleError("invalid number of arguments to XADD command")
 	}
 
 	key, ok := respToString(call[1])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected a string stream key")
-		return
+		return respSimpleError("expected a string stream key")
 	}
 
 	raw_stream, ok := store.get(key)
@@ -399,34 +366,29 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 		stream, ok = raw_stream.(*respStream)
 		if !ok {
 			fmt.Fprintf(os.Stderr, "key has a non stream value type")
-			return
 		}
 	}
 
 	id, ok := respToString(call[2])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected a string entry id")
-		return
+		return respSimpleError("expected a string entry id")
 	}
 
 	id, err := processStreamID(stream, id)
 	if err != nil {
 		res := respSimpleError(err.Error())
-		writeToConnection(conn, res.encode())
-		return
+		return res
 	}
 
 	data := make(map[string]respObject)
 	if (len(call)-3)%2 != 0 {
-		fmt.Fprintf(os.Stderr, "expected a list of key/value pairs")
-		return
+		return respSimpleError("expected a list of key/value pairs")
 	}
 
 	for i := 3; i < len(call); i += 2 {
 		data_key, ok := respToString(call[i])
 		if !ok {
-			fmt.Fprintf(os.Stderr, "expected stream entry keys to be strings")
-			return
+			return respSimpleError("expected stream entry keys to be strings")
 		}
 		data[data_key] = call[i+1]
 	}
@@ -437,34 +399,27 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) {
 	store.set(key, stream)
 
 	res := respBulkString(id)
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 4 {
-		res := respSimpleError("ERR invalid number of arguments to XRANGE command")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR invalid number of arguments to XRANGE command")
 	}
 
 	key, ok := respToString(call[1])
 	if !ok {
 		res := respSimpleError("ERR expected a string key")
-		writeToConnection(conn, res.encode())
-		return
+		return res
 	}
 
 	stream_raw, ok := store.get(key)
 	if !ok {
-		res := respSimpleError("ERR key does not exist in store")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR key does not exist in store")
 	}
 	stream, ok := stream_raw.(*respStream)
 	if !ok {
-		res := respSimpleError("ERR key does not hold a stream value")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR key does not hold a stream value")
 	}
 
 	stream.mu.Lock()
@@ -472,16 +427,12 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	from_id, ok := respToString(call[2])
 	if !ok {
-		res := respSimpleError("ERR the start argument is not a valid string")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR the start argument is not a valid string")
 	}
 
 	to_id, ok := respToString(call[3])
 	if !ok {
-		res := respSimpleError("ERR the end argument is not a valid string")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR the end argument is not a valid string")
 	}
 
 	var from_index int
@@ -513,14 +464,12 @@ func handleXrangeCommand(call respArray, conn *redisConn, store *redisStore) {
 		res = append(res, entry)
 	}
 
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) < 4 || len(call)%2 != 0 {
-		res := respSimpleError("ERR invalid number of arguments to XREAD command")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR invalid number of arguments to XREAD command")
 	}
 
 	keys_and_ids := call[2:]
@@ -534,9 +483,7 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 
 		timeout, ok := respToInt(call[2])
 		if !ok {
-			res := respSimpleError("ERR expected timeout to be a number")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR expected timeout to be a number")
 		}
 
 		if timeout == 0 {
@@ -555,29 +502,21 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 	for i := 0; i < num_of_streams; i++ {
 		key, ok := respToString(keys_and_ids[i])
 		if !ok {
-			res := respSimpleError("ERR expected a string for stream key")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR expected a string for stream key")
 		}
 
 		id, ok := respToString(keys_and_ids[i+num_of_streams])
 		if !ok {
-			res := respSimpleError("ERR expected a string for stream key")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR expected a string for stream key")
 		}
 
 		stream_raw, ok := store.get(key)
 		if !ok {
-			res := respSimpleError("ERR key does not exist in store")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR key does not exist in store")
 		}
 		stream, ok := stream_raw.(*respStream)
 		if !ok {
-			res := respSimpleError("ERR key does not hold a stream value")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR key does not hold a stream value")
 		}
 
 		if id == "$" {
@@ -599,19 +538,17 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 		res = readFromStreams(keys, streams, ids)
 	}
 
-	writeToConnection(conn, res.encode())
+	return res
 }
 
-func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	if len(call) != 2 {
-		fmt.Fprintf(os.Stderr, "invalid number of commands to INCR command")
-		return
+		return respSimpleError("invalid number of commands to INCR command")
 	}
 
 	key, ok := respToString(call[1])
 	if !ok {
-		fmt.Fprintf(os.Stderr, "expected a string key")
-		return
+		return respSimpleError("expected a string key")
 	}
 
 	value_raw, key_exists := store.get(key)
@@ -622,9 +559,7 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 		stored_value, is_a_number := respToInt(value_raw)
 
 		if !is_a_number {
-			res := respSimpleError("ERR value is not an integer or out of range")
-			writeToConnection(conn, res.encode())
-			return
+			return respSimpleError("ERR value is not an integer or out of range")
 		}
 
 		value = stored_value + 1
@@ -635,29 +570,25 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 	str := respBulkString(strconv.Itoa(value))
 	store.set(key, str)
 
-	writeToConnection(conn, respInteger(value).encode())
+	return respInteger(value)
 }
 
-func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	conn.mu.Lock()
 	conn.multi = true
 	conn.mu.Unlock()
-	res := respSimpleString("OK")
-	writeToConnection(conn, res.encode())
+	return respSimpleString("OK")
 }
 
-func handleExecCommand(call respArray, conn *redisConn, store *redisStore) {
+func handleExecCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	conn.mu.Lock()
 	defer conn.mu.Unlock()
 	if !conn.multi {
-		res := respSimpleError("ERR EXEC without MULTI")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleError("ERR EXEC without MULTI")
 	}
 
-	res := respArray{}
-	writeToConnection(conn, res.encode())
 	conn.multi = false
+	return respArray{}
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
@@ -893,7 +824,7 @@ func sendAckToReplica(conn *redisConn) {
 	}
 	conn.expected_offset = conn.total_propagated
 	res := generateCommand("REPLCONF", "GETACK", "*")
-	writeToConnection(conn, res)
+	writeToConnection(conn, res.encode())
 	conn.total_propagated += len(res)
 	conn.mu.Unlock()
 }
