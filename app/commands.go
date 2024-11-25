@@ -641,6 +641,10 @@ func handleExecCommand(call respArray, conn *redisConn, store *redisStore) {
 		writeToConnection(conn, res.encode())
 		return
 	}
+
+	res := respArray{}
+	writeToConnection(conn, res.encode())
+	store.multi = false
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
