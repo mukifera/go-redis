@@ -602,8 +602,15 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 	var value int
 
 	if key_exists {
-		value, _ = respToInt(value_raw)
-		value += 1
+		stored_value, is_a_number := respToInt(value_raw)
+
+		if !is_a_number {
+			res := respSimpleError("ERR value is not an integer or out of range")
+			writeToConnection(conn, res.encode())
+			return
+		}
+
+		value = stored_value + 1
 	} else {
 		value = 1
 	}
