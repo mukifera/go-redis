@@ -50,6 +50,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleXrangeCommand(call, conn, store)
 	case "XREAD":
 		handleXreadCommand(call, conn, store)
+	case "INCR":
+		handleIncrCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -580,6 +582,27 @@ func handleXreadCommand(call respArray, conn *redisConn, store *redisStore) {
 		res = readFromStreams(keys, streams, ids)
 	}
 
+	writeToConnection(conn, res.encode())
+}
+
+func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
+	if len(call) != 2 {
+		fmt.Fprintf(os.Stderr, "invalid number of commands to INCR command")
+		return
+	}
+
+	key, ok := respToString(call[1])
+	if !ok {
+		fmt.Fprintf(os.Stderr, "expected a string key")
+		return
+	}
+
+	value_raw, _ := store.get(key)
+	value, _ := respToInt(value_raw)
+	value += 1
+	store.set(key, respInteger(value))
+
+	res := respInteger(value)
 	writeToConnection(conn, res.encode())
 }
 
