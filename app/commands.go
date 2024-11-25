@@ -52,6 +52,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleXreadCommand(call, conn, store)
 	case "INCR":
 		handleIncrCommand(call, conn, store)
+	case "MULTI":
+		handleMultiCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -619,6 +621,11 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 	store.set(key, str)
 
 	writeToConnection(conn, respInteger(value).encode())
+}
+
+func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) {
+	res := respSimpleString("OK")
+	writeToConnection(conn, res.encode())
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
