@@ -18,6 +18,19 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
+	command = strings.ToUpper(command)
+
+	conn.mu.Lock()
+	if conn.multi && command != "EXEC" {
+		fmt.Printf("Queued command %v\n", call)
+		conn.queued = append(conn.queued, call)
+		conn.mu.Unlock()
+		res := respSimpleString("QUEUED")
+		writeToConnection(conn, res.encode())
+		return
+	}
+	conn.mu.Unlock()
+
 	fmt.Printf("Received command %v\n", call)
 
 	switch strings.ToUpper(string(command)) {
@@ -626,17 +639,17 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 }
 
 func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) {
-	store.mu.Lock()
-	store.multi = true
-	store.mu.Unlock()
+	conn.mu.Lock()
+	conn.multi = true
+	conn.mu.Unlock()
 	res := respSimpleString("OK")
 	writeToConnection(conn, res.encode())
 }
 
 func handleExecCommand(call respArray, conn *redisConn, store *redisStore) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	if !store.multi {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if !conn.multi {
 		res := respSimpleError("ERR EXEC without MULTI")
 		writeToConnection(conn, res.encode())
 		return
@@ -644,7 +657,7 @@ func handleExecCommand(call respArray, conn *redisConn, store *redisStore) {
 
 	res := respArray{}
 	writeToConnection(conn, res.encode())
-	store.multi = false
+	conn.multi = false
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {

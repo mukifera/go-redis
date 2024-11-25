@@ -102,21 +102,24 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 		n, response := decode(conn.byteChan)
 		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
 
-		switch res := response.(type) {
-		case respArray:
-			handleCommand(res, conn, store)
-		case respSimpleString, respBulkString:
-			call := []respObject{res}
-			handleCommand(call, conn, store)
-		default:
-			fmt.Fprintf(os.Stderr, "invalid command %v\n", response)
-		}
+		acceptCommand(response, conn, store)
+	}
+}
 
-		if store.master != nil && conn.conn == store.master.conn {
-			conn.mu.Lock()
-			conn.offset += n
-			conn.mu.Unlock()
-		}
+func acceptCommand(command respObject, conn *redisConn, store *redisStore) {
+	switch res := command.(type) {
+	case respArray:
+		handleCommand(res, conn, store)
+	case respSimpleString, respBulkString:
+		call := []respObject{res}
+		handleCommand(call, conn, store)
+	default:
+		fmt.Fprintf(os.Stderr, "invalid command %v\n", command)
+	}
+	if store.master != nil && conn.conn == store.master.conn {
+		conn.mu.Lock()
+		conn.offset += len(command.encode())
+		conn.mu.Unlock()
 	}
 }
 

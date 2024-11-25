@@ -26,6 +26,8 @@ type redisConn struct {
 	offset           int
 	expected_offset  int
 	total_propagated int
+	multi            bool
+	queued           []respObject
 	relation         connRelationType
 	mu               sync.Mutex
 }
@@ -36,7 +38,6 @@ type redisStore struct {
 	params   map[string]string
 	replicas []*redisConn
 	master   *redisConn
-	multi    bool
 	mu       sync.Mutex
 }
 
@@ -49,6 +50,8 @@ func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
 		offset:           0,
 		expected_offset:  0,
 		total_propagated: 0,
+		multi:            false,
+		queued:           make([]respObject, 0),
 		relation:         relation_type,
 		mu:               sync.Mutex{},
 	}
@@ -59,7 +62,6 @@ func (s *redisStore) init() {
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 	s.replicas = make([]*redisConn, 0)
-	s.multi = false
 }
 
 func (s *redisStore) set(key string, value respObject) {
