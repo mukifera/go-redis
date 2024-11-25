@@ -597,13 +597,21 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 		return
 	}
 
-	value_raw, _ := store.get(key)
-	value, _ := respToInt(value_raw)
-	value += 1
-	store.set(key, respInteger(value))
+	value_raw, key_exists := store.get(key)
 
-	res := respInteger(value)
-	writeToConnection(conn, res.encode())
+	var value int
+
+	if key_exists {
+		value, _ = respToInt(value_raw)
+		value += 1
+	} else {
+		value = 1
+	}
+
+	str := respBulkString(strconv.Itoa(value))
+	store.set(key, str)
+
+	writeToConnection(conn, respInteger(value).encode())
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
