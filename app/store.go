@@ -36,6 +36,7 @@ type redisStore struct {
 	params   map[string]string
 	replicas []*redisConn
 	master   *redisConn
+	multi    bool
 	mu       sync.Mutex
 }
 
@@ -58,6 +59,7 @@ func (s *redisStore) init() {
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 	s.replicas = make([]*redisConn, 0)
+	s.multi = false
 }
 
 func (s *redisStore) set(key string, value respObject) {

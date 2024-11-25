@@ -54,6 +54,8 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) {
 		handleIncrCommand(call, conn, store)
 	case "MULTI":
 		handleMultiCommand(call, conn, store)
+	case "EXEC":
+		handleExecCommand(call, conn, store)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
 	}
@@ -624,8 +626,21 @@ func handleIncrCommand(call respArray, conn *redisConn, store *redisStore) {
 }
 
 func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) {
+	store.mu.Lock()
+	store.multi = true
+	store.mu.Unlock()
 	res := respSimpleString("OK")
 	writeToConnection(conn, res.encode())
+}
+
+func handleExecCommand(call respArray, conn *redisConn, store *redisStore) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if !store.multi {
+		res := respSimpleError("ERR EXEC without MULTI")
+		writeToConnection(conn, res.encode())
+		return
+	}
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
