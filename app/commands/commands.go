@@ -5,7 +5,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/core"
 	"github.com/codecrafters-io/redis-starter-go/app/rdb"
@@ -191,33 +190,6 @@ func handleInfoCommand(call resp.Array, conn *core.Conn, store *core.Store) resp
 	return res
 }
 
-func handlePsyncCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
-	strs := make([]string, 3)
-	strs[0] = "FULLRESYNC"
-	ok := true
-	strs[1], ok = store.GetParam("master_replid")
-	if !ok {
-		return resp.SimpleError("no master_replid found")
-	}
-	strs[2], ok = store.GetParam("master_repl_offset")
-	if !ok {
-		return resp.SimpleError("no master_repl_offset found")
-	}
-	res := resp.SimpleString(strings.Join(strs, " "))
-	conn.Write(res.Encode())
-	sendCurrentState(conn)
-	conn.Mu.Lock()
-	conn.Total_propagated = 0
-	conn.Offset = 0
-	conn.Mu.Unlock()
-
-	conn.Ticker = time.NewTicker(200 * time.Millisecond)
-	conn.StopChan = make(chan bool)
-	go sendAcksToReplica(conn)
-
-	return nil
-}
-
 func handleTypeCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of arguments to TYPE command")
@@ -270,32 +242,6 @@ func sendCurrentState(conn *core.Conn) {
 	res := resp.BulkString(data).Encode()
 	res = res[:len(res)-2]
 	conn.Write(res)
-}
-
-func sendAcksToReplica(conn *core.Conn) {
-	defer conn.Ticker.Stop()
-	for {
-		select {
-		case <-conn.Ticker.C:
-			sendAckToReplica(conn)
-		case <-conn.StopChan:
-			return
-		}
-	}
-}
-
-func sendAckToReplica(conn *core.Conn) {
-	conn.Mu.Lock()
-	if conn.Offset == conn.Expected_offset {
-		conn.Mu.Unlock()
-		return
-	}
-	conn.Expected_offset = conn.Total_propagated
-	res := Generate("REPLCONF", "GETACK", "*").Encode()
-	conn.Write(res)
-	conn.Total_propagated += len(res)
-	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
-	conn.Mu.Unlock()
 }
 
 func Generate(strs ...string) resp.Array {
