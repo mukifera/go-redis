@@ -6,7 +6,7 @@ import (
 )
 
 type Object interface {
-	encode() []byte
+	Encode() []byte
 }
 
 type SimpleString string
@@ -19,14 +19,14 @@ type Set map[Object]struct{}
 type Map map[Object]Object
 type Boolean bool
 type Stream struct {
-	mu      sync.Mutex
-	entries []struct {
-		id   string
-		data map[string]Object
+	Mu      sync.Mutex
+	Entries []struct {
+		Id   string
+		Data map[string]Object
 	}
 }
 
-func (r SimpleString) encode() []byte {
+func (r SimpleString) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '+')
 	ret = append(ret, r...)
@@ -34,7 +34,7 @@ func (r SimpleString) encode() []byte {
 	return ret
 }
 
-func (r SimpleError) encode() []byte {
+func (r SimpleError) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '-')
 	ret = append(ret, r...)
@@ -42,7 +42,7 @@ func (r SimpleError) encode() []byte {
 	return ret
 }
 
-func (r Integer) encode() []byte {
+func (r Integer) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, ':')
 	if r < 0 {
@@ -54,7 +54,7 @@ func (r Integer) encode() []byte {
 	return ret
 }
 
-func (r BulkString) encode() []byte {
+func (r BulkString) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '$')
 	ret = append(ret, strconv.Itoa(len(r))...)
@@ -64,33 +64,33 @@ func (r BulkString) encode() []byte {
 	return ret
 }
 
-func (r NullBulkString) encode() []byte {
+func (r NullBulkString) Encode() []byte {
 	return []byte("$-1\r\n")
 }
 
-func (r Array) encode() []byte {
+func (r Array) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '*')
 	ret = append(ret, strconv.Itoa(len(r))...)
 	ret = append(ret, "\r\n"...)
 	for i := 0; i < len(r); i++ {
-		ret = append(ret, r[i].encode()...)
+		ret = append(ret, r[i].Encode()...)
 	}
 	return ret
 }
 
-func (r Set) encode() []byte {
+func (r Set) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '~')
 	ret = append(ret, strconv.Itoa(len(r))...)
 	ret = append(ret, "\r\n"...)
 	for key := range r {
-		ret = append(ret, key.encode()...)
+		ret = append(ret, key.Encode()...)
 	}
 	return ret
 }
 
-func (r Boolean) encode() []byte {
+func (r Boolean) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '#')
 	if r {
@@ -102,33 +102,33 @@ func (r Boolean) encode() []byte {
 	return ret
 }
 
-func (r Map) encode() []byte {
+func (r Map) Encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '%')
 	ret = append(ret, strconv.Itoa(len(r))...)
 	ret = append(ret, "\r\n"...)
 	for key, value := range r {
-		ret = append(ret, key.encode()...)
-		ret = append(ret, value.encode()...)
+		ret = append(ret, key.Encode()...)
+		ret = append(ret, value.Encode()...)
 	}
 	return ret
 }
 
-func (r Stream) encode() []byte {
+func (r Stream) Encode() []byte {
 	return nil
 }
 
-func (r *Stream) addEntry(id string, data map[string]Object) {
-	r.entries = append(r.entries, struct {
-		id   string
-		data map[string]Object
+func (r *Stream) AddEntry(id string, data map[string]Object) {
+	r.Entries = append(r.Entries, struct {
+		Id   string
+		Data map[string]Object
 	}{
-		id:   id,
-		data: data,
+		Id:   id,
+		Data: data,
 	})
 }
 
-func stringArrayToResp(arr []string) Array {
+func StringsToArray(arr []string) Array {
 	var ret Array = make([]Object, len(arr))
 	for i := 0; i < len(arr); i++ {
 		ret[i] = BulkString(arr[i])
@@ -136,7 +136,7 @@ func stringArrayToResp(arr []string) Array {
 	return ret
 }
 
-func respToString(obj Object) (string, bool) {
+func ToString(obj Object) (string, bool) {
 	simple, ok := obj.(SimpleString)
 	if ok {
 		return string(simple), true
@@ -148,12 +148,12 @@ func respToString(obj Object) (string, bool) {
 	return "", false
 }
 
-func respToInt(obj Object) (int, bool) {
+func ToInt(obj Object) (int, bool) {
 	integer, ok := obj.(Integer)
 	if ok {
 		return int(integer), true
 	}
-	str, ok := respToString(obj)
+	str, ok := ToString(obj)
 	if ok {
 		ret, err := strconv.Atoi(str)
 		if err == nil {
