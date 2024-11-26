@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/core"
+	"github.com/codecrafters-io/redis-starter-go/app/rdb"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -54,7 +55,7 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 	store.Init()
 	rdb_file := filepath.Join(flags.dir, flags.dbfilename)
 
-	store, err = readRDBFile(rdb_file)
+	store, err = rdb.ReadFile(rdb_file)
 	if err != nil {
 		return err
 	}
