@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
 type contentType byte
@@ -223,7 +225,7 @@ func readLengthEncodedInt(data []byte) (bytes_read uint8, integer uint32) {
 	return
 }
 
-func readKeyValue(data []byte) (bytes_read uint64, key string, value respObject) {
+func readKeyValue(data []byte) (bytes_read uint64, key string, value resp.Object) {
 
 	data_type := data[0]
 
@@ -235,15 +237,15 @@ func readKeyValue(data []byte) (bytes_read uint64, key string, value respObject)
 	switch data_type {
 	case rdbValueTypes.STRING:
 		n, str := readEncodedString(data[bytes_read:])
-		value = respBulkString(str)
+		value = resp.BulkString(str)
 		bytes_read += n
 	case rdbValueTypes.LIST:
 		n, list := readRDBList(data[bytes_read:])
-		value = stringArrayToResp(list)
+		value = resp.StringsToArray(list)
 		bytes_read += n
 	case rdbValueTypes.SET:
 		n, set := readRDBSet(data[bytes_read:])
-		value = respSet(set)
+		value = resp.Set(set)
 		bytes_read += n
 	default:
 		fmt.Fprintf(os.Stderr, "unsupported key/value type\n")
@@ -269,11 +271,11 @@ func readRDBList(data []byte) (bytes_read uint64, list []string) {
 	return
 }
 
-func readRDBSet(data []byte) (bytes_read uint64, set map[respObject]struct{}) {
+func readRDBSet(data []byte) (bytes_read uint64, set map[resp.Object]struct{}) {
 	bytes_read, list := readRDBList(data)
-	set = make(map[respObject]struct{})
+	set = make(map[resp.Object]struct{})
 	for _, str := range list {
-		set[respBulkString(str)] = struct{}{}
+		set[resp.BulkString(str)] = struct{}{}
 	}
 	return
 }
