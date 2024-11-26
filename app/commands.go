@@ -42,7 +42,7 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) respObjec
 	}
 
 	conn.mu.Lock()
-	if conn.multi && command != "EXEC" {
+	if conn.multi && command != "EXEC" && command != "DISCARD" {
 		fmt.Printf("Queued command %v\n", call)
 		conn.queued = append(conn.queued, call)
 		conn.mu.Unlock()
@@ -70,6 +70,7 @@ func handleCommand(call respArray, conn *redisConn, store *redisStore) respObjec
 		"INCR":     handleIncrCommand,
 		"MULTI":    handleMultiCommand,
 		"EXEC":     handleExecCommand,
+		"DISCARD":  handleDiscardCommand,
 	}
 
 	handler, ok := handlers[command]
@@ -608,6 +609,17 @@ func handleExecCommand(call respArray, conn *redisConn, store *redisStore) respO
 	}
 
 	return res
+}
+
+func handleDiscardCommand(call respArray, conn *redisConn, store *redisStore) respObject {
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if !conn.multi {
+		return respSimpleError("ERR DISCARD without MULTI")
+	}
+	conn.multi = false
+	conn.queued = make([]respObject, 0)
+	return respSimpleString("OK")
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
