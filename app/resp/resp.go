@@ -174,7 +174,7 @@ func Decode(in <-chan byte) (n int, ret Object) {
 		n, str = decodeSimpleString(in)
 		ret = SimpleError(str)
 	case ':':
-		n, ret = decodeInteger(in)
+		n, ret = DecodeInteger(in)
 	case '$':
 		n, ret = decodeBulkString(in)
 	case '*':
@@ -223,7 +223,7 @@ func decodeSimpleString(in <-chan byte) (int, SimpleString) {
 	return n, SimpleString(string(buf[:len(buf)-2]))
 }
 
-func decodeInteger(in <-chan byte) (int, Integer) {
+func DecodeInteger(in <-chan byte) (int, Integer) {
 	negative := false
 	value := 0
 	n := 0
@@ -256,7 +256,7 @@ func decodeInteger(in <-chan byte) (int, Integer) {
 }
 
 func decodeBulkString(in <-chan byte) (int, BulkString) {
-	n, length := decodeInteger(in)
+	n, length := DecodeInteger(in)
 
 	if length == -1 {
 		return n, ""
@@ -269,7 +269,7 @@ func decodeBulkString(in <-chan byte) (int, BulkString) {
 }
 
 func decodeArray(in <-chan byte) (int, Array) {
-	n, length := decodeInteger(in)
+	n, length := DecodeInteger(in)
 
 	if length == -1 {
 		return n, nil
@@ -293,7 +293,7 @@ func decodeBoolean(in <-chan byte) (int, Boolean) {
 
 func decodeMap(in <-chan byte) (int, Map) {
 	dict := make(map[Object]Object)
-	n, length := decodeInteger(in)
+	n, length := DecodeInteger(in)
 	for i := 0; i < int(length); i++ {
 		nn, key := Decode(in)
 		n += nn
@@ -306,7 +306,7 @@ func decodeMap(in <-chan byte) (int, Map) {
 
 func decodeSet(in <-chan byte) (int, Set) {
 	dict := make(map[Object]struct{})
-	n, length := decodeInteger(in)
+	n, length := DecodeInteger(in)
 	for i := 0; i < int(length); i++ {
 		nn, value := Decode(in)
 		n += nn
