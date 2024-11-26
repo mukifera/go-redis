@@ -4,6 +4,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
 type connRelationType byte
@@ -27,13 +29,13 @@ type redisConn struct {
 	expected_offset  int
 	total_propagated int
 	multi            bool
-	queued           []respObject
+	queued           []resp.Object
 	relation         connRelationType
 	mu               sync.Mutex
 }
 
 type redisStore struct {
-	dict     map[string]respObject
+	dict     map[string]resp.Object
 	expiry   map[interface{}]int64
 	params   map[string]string
 	replicas []*redisConn
@@ -51,37 +53,37 @@ func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
 		expected_offset:  0,
 		total_propagated: 0,
 		multi:            false,
-		queued:           make([]respObject, 0),
+		queued:           make([]resp.Object, 0),
 		relation:         relation_type,
 		mu:               sync.Mutex{},
 	}
 }
 
 func (s *redisStore) init() {
-	s.dict = make(map[string]respObject)
+	s.dict = make(map[string]resp.Object)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
 	s.replicas = make([]*redisConn, 0)
 }
 
-func (s *redisStore) set(key string, value respObject) {
+func (s *redisStore) set(key string, value resp.Object) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 }
 
-func (s *redisStore) setWithExpiry(key string, value respObject, expiry uint64) {
+func (s *redisStore) setWithExpiry(key string, value resp.Object, expiry uint64) {
 	s.setWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
 }
 
-func (s *redisStore) setWithAbsoluteExpiry(key string, value respObject, expiry uint64) {
+func (s *redisStore) setWithAbsoluteExpiry(key string, value resp.Object, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 	s.expiry[key] = int64(expiry)
 }
 
-func (s *redisStore) get(key string) (respObject, bool) {
+func (s *redisStore) get(key string) (resp.Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, in_dict := s.dict[key]
@@ -128,9 +130,9 @@ func (s *redisStore) typeOfValue(key string) string {
 		return "none"
 	}
 	switch value.(type) {
-	case respSimpleString, respBulkString:
+	case resp.SimpleString, resp.BulkString:
 		return "string"
-	case respStream, *respStream:
+	case resp.Stream, *resp.Stream:
 		return "stream"
 	default:
 		return "unknown"
