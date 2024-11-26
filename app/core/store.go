@@ -10,7 +10,7 @@ import (
 
 type connRelationType byte
 
-var connRelationTypeEnum = struct {
+var ConnRelationTypeEnum = struct {
 	NORMAL  connRelationType
 	MASTER  connRelationType
 	REPLICA connRelationType
@@ -21,69 +21,69 @@ var connRelationTypeEnum = struct {
 }
 
 type Conn struct {
-	conn             net.Conn
-	byteChan         chan byte
-	stopChan         chan bool
-	ticker           *time.Ticker
-	offset           int
-	expected_offset  int
-	total_propagated int
-	multi            bool
-	queued           []resp.Object
-	relation         connRelationType
-	mu               sync.Mutex
+	Conn             net.Conn
+	ByteChan         chan byte
+	StopChan         chan bool
+	Ticker           *time.Ticker
+	Offset           int
+	Expected_offset  int
+	Total_propagated int
+	Multi            bool
+	Queued           []resp.Object
+	Relation         connRelationType
+	Mu               sync.Mutex
 }
 
 type Store struct {
 	dict     map[string]resp.Object
 	expiry   map[interface{}]int64
 	params   map[string]string
-	replicas []*Conn
-	master   *Conn
+	Replicas []*Conn
+	Master   *Conn
 	mu       sync.Mutex
 }
 
-func newRedisConn(conn net.Conn, relation_type connRelationType) *Conn {
+func NewConn(conn net.Conn, relation_type connRelationType) *Conn {
 	return &Conn{
-		conn:             conn,
-		byteChan:         make(chan byte, 1<<14),
-		stopChan:         make(chan bool),
-		ticker:           nil,
-		offset:           0,
-		expected_offset:  0,
-		total_propagated: 0,
-		multi:            false,
-		queued:           make([]resp.Object, 0),
-		relation:         relation_type,
-		mu:               sync.Mutex{},
+		Conn:             conn,
+		ByteChan:         make(chan byte, 1<<14),
+		StopChan:         make(chan bool),
+		Ticker:           nil,
+		Offset:           0,
+		Expected_offset:  0,
+		Total_propagated: 0,
+		Multi:            false,
+		Queued:           make([]resp.Object, 0),
+		Relation:         relation_type,
+		Mu:               sync.Mutex{},
 	}
 }
 
-func (s *Store) init() {
+func (s *Store) Init() {
 	s.dict = make(map[string]resp.Object)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
-	s.replicas = make([]*Conn, 0)
+	s.Replicas = make([]*Conn, 0)
 }
 
-func (s *Store) set(key string, value resp.Object) {
+func (s *Store) Set(key string, value resp.Object) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 }
 
-func (s *Store) setWithExpiry(key string, value resp.Object, expiry uint64) {
-	s.setWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
+func (s *Store) SetWithExpiry(key string, value resp.Object, expiry uint64) {
+	s.SetWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
 }
 
-func (s *Store) setWithAbsoluteExpiry(key string, value resp.Object, expiry uint64) {
+func (s *Store) SetWithAbsoluteExpiry(key string, value resp.Object, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 	s.expiry[key] = int64(expiry)
 }
 
-func (s *Store) get(key string) (resp.Object, bool) {
+func (s *Store) Get(key string) (resp.Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, in_dict := s.dict[key]
@@ -96,18 +96,18 @@ func (s *Store) get(key string) (resp.Object, bool) {
 	return value, in_dict
 }
 
-func (s *Store) setParam(key string, value string) {
+func (s *Store) SetParam(key string, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.params[key] = value
 }
 
-func (s *Store) getParam(key string) (string, bool) {
+func (s *Store) GetParam(key string) (string, bool) {
 	value, ok := s.params[key]
 	return value, ok
 }
 
-func (s *Store) getKeys(_ string) []string {
+func (s *Store) GetKeys(_ string) []string {
 	keys := make([]string, len(s.dict))
 	i := 0
 	for key := range s.dict {
@@ -117,15 +117,15 @@ func (s *Store) getKeys(_ string) []string {
 	return keys
 }
 
-func (s *Store) addReplica(conn *Conn) {
+func (s *Store) AddReplica(conn *Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.replicas = append(s.replicas, conn)
-	conn.relation = connRelationTypeEnum.REPLICA
+	s.Replicas = append(s.Replicas, conn)
+	conn.Relation = ConnRelationTypeEnum.REPLICA
 }
 
-func (s *Store) typeOfValue(key string) string {
-	value, ok := s.get(key)
+func (s *Store) TypeOfValue(key string) string {
+	value, ok := s.Get(key)
 	if !ok {
 		return "none"
 	}
