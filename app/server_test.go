@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/commands"
 	"github.com/codecrafters-io/redis-starter-go/app/core"
 )
 
@@ -47,7 +48,7 @@ func TestServerRespondsToPing(t *testing.T) {
 	}
 
 	conn := core.NewConn(c, core.ConnRelationTypeEnum.NORMAL)
-	command := generateCommand("PING")
+	command := commands.Generate("PING")
 	conn.Write(command.Encode())
 
 	buf := make([]byte, 7)

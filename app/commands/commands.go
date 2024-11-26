@@ -1,4 +1,4 @@
-package main
+package commands
 
 import (
 	"fmt"
@@ -16,7 +16,7 @@ import (
 type commandHandlerFunc func(resp.Array, *core.Conn, *core.Store) resp.Object
 type commandHandlerFuncs map[string]commandHandlerFunc
 
-func getCommandName(call resp.Array) (string, bool) {
+func GetCommandName(call resp.Array) (string, bool) {
 	command, ok := resp.ToString(call[0])
 	if !ok {
 		return "", false
@@ -25,7 +25,7 @@ func getCommandName(call resp.Array) (string, bool) {
 	return strings.ToUpper(command), true
 }
 
-func getRespArrayCall(obj resp.Object) resp.Array {
+func GetRespArrayCall(obj resp.Object) resp.Array {
 	switch typed := obj.(type) {
 	case resp.Array:
 		return typed
@@ -38,9 +38,9 @@ func getRespArrayCall(obj resp.Object) resp.Array {
 	}
 }
 
-func handleCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
+func HandleCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 
-	command, ok := getCommandName(call)
+	command, ok := GetCommandName(call)
 	if !ok {
 		return resp.SimpleError("expected command name as string")
 	}
@@ -258,7 +258,7 @@ func handleReplconfCommand(call resp.Array, conn *core.Conn, store *core.Store) 
 
 	case "GETACK":
 		conn.Mu.Lock()
-		res = generateCommand("REPLCONF", "ACK", strconv.Itoa(conn.Offset))
+		res = Generate("REPLCONF", "ACK", strconv.Itoa(conn.Offset))
 		fmt.Printf("offset = %d\n", conn.Offset)
 		conn.Mu.Unlock()
 
@@ -608,7 +608,8 @@ func handleExecCommand(call resp.Array, conn *core.Conn, store *core.Store) resp
 
 	res := resp.Array{}
 	for _, sub_call := range conn.Queued {
-		sub := acceptCommand(sub_call, conn, store)
+		command := GetRespArrayCall(sub_call)
+		sub := HandleCommand(command, conn, store)
 		res = append(res, sub)
 	}
 
@@ -824,20 +825,6 @@ func sendCurrentState(conn *core.Conn) {
 	conn.Write(res)
 }
 
-func propagateToReplicas(call resp.Array, store *core.Store) {
-	res := call.Encode()
-	for _, conn := range store.Replicas {
-		fmt.Printf("Propagating %v to replica %v\n", call, conn.Conn.LocalAddr())
-		conn.Write(res)
-		conn.Mu.Lock()
-		conn.Total_propagated += len(res)
-		conn.Expected_offset = conn.Total_propagated
-		fmt.Printf("sent %d bytes to replica %v: %s\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
-		fmt.Printf("total_propagated = %d, offset = %d\n", conn.Total_propagated, conn.Offset)
-		conn.Mu.Unlock()
-	}
-}
-
 func sendAcksToReplica(conn *core.Conn) {
 	defer conn.Ticker.Stop()
 	for {
@@ -857,9 +844,18 @@ func sendAckToReplica(conn *core.Conn) {
 		return
 	}
 	conn.Expected_offset = conn.Total_propagated
-	res := generateCommand("REPLCONF", "GETACK", "*").Encode()
+	res := Generate("REPLCONF", "GETACK", "*").Encode()
 	conn.Write(res)
 	conn.Total_propagated += len(res)
 	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
 	conn.Mu.Unlock()
+}
+
+func Generate(strs ...string) resp.Array {
+	arr := resp.Array(make([]resp.Object, len(strs)))
+	for i := 0; i < len(arr); i++ {
+		bulk_str := resp.BulkString(strs[i])
+		arr[i] = &bulk_str
+	}
+	return arr
 }

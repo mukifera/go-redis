@@ -1,6 +1,8 @@
 package core
 
 import (
+	"fmt"
+	"strconv"
 	"sync"
 	"time"
 
@@ -93,5 +95,19 @@ func (s *Store) TypeOfValue(key string) string {
 		return "stream"
 	default:
 		return "unknown"
+	}
+}
+
+func (store *Store) PropagateToReplicas(call resp.Array) {
+	res := call.Encode()
+	for _, conn := range store.Replicas {
+		fmt.Printf("Propagating %v to replica %v\n", call, conn.Conn.LocalAddr())
+		conn.Write(res)
+		conn.Mu.Lock()
+		conn.Total_propagated += len(res)
+		conn.Expected_offset = conn.Total_propagated
+		fmt.Printf("sent %d bytes to replica %v: %s\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
+		fmt.Printf("total_propagated = %d, offset = %d\n", conn.Total_propagated, conn.Offset)
+		conn.Mu.Unlock()
 	}
 }

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/commands"
 	"github.com/codecrafters-io/redis-starter-go/app/core"
 	"github.com/codecrafters-io/redis-starter-go/app/rdb"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
@@ -105,16 +106,16 @@ func acceptCommands(conn *core.Conn, store *core.Store) {
 		n, response := resp.Decode(conn.ByteChan)
 		fmt.Printf("decoded %d bytes from %v\n", n, conn.Conn.RemoteAddr())
 
-		call := getRespArrayCall(response)
+		call := commands.GetRespArrayCall(response)
 
-		res := acceptCommand(call, conn, store)
+		res := commands.HandleCommand(call, conn, store)
 		if res != nil {
 			conn.Write(res.Encode())
 		}
 
-		command_name, _ := getCommandName(call)
+		command_name, _ := commands.GetCommandName(call)
 		if command_name == "SET" {
-			propagateToReplicas(call, store)
+			store.PropagateToReplicas(call)
 		}
 
 		if store.Master != nil && conn.Conn == store.Master.Conn {
@@ -123,11 +124,6 @@ func acceptCommands(conn *core.Conn, store *core.Store) {
 			conn.Mu.Unlock()
 		}
 	}
-}
-
-func acceptCommand(command resp.Object, conn *core.Conn, store *core.Store) resp.Object {
-	call := getRespArrayCall(command)
-	return handleCommand(call, conn, store)
 }
 
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -141,15 +137,6 @@ func generateRandomID(length int) string {
 	return sb.String()
 }
 
-func generateCommand(strs ...string) resp.Array {
-	arr := resp.Array(make([]resp.Object, len(strs)))
-	for i := 0; i < len(arr); i++ {
-		bulk_str := resp.BulkString(strs[i])
-		arr[i] = &bulk_str
-	}
-	return arr
-}
-
 func performMasterHandshake(listening_port string, master_ip_port string, store *core.Store) *core.Conn {
 
 	conn, err := net.Dial("tcp", master_ip_port)
@@ -161,7 +148,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	master_conn := core.NewConn(conn, core.ConnRelationTypeEnum.MASTER)
 	go master_conn.Read()
 
-	ping := generateCommand("PING")
+	ping := commands.Generate("PING")
 	master_conn.Write(ping.Encode())
 	if !waitForResponse("PONG", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
@@ -169,7 +156,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	}
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping.Encode())))
 
-	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
+	replconf := commands.Generate("REPLCONF", "listening-port", listening_port)
 	master_conn.Write(replconf.Encode())
 	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
@@ -177,7 +164,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	}
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
-	replconf = generateCommand("REPLCONF", "capa", "psync2")
+	replconf = commands.Generate("REPLCONF", "capa", "psync2")
 	master_conn.Write(replconf.Encode())
 	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
@@ -185,7 +172,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	}
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
-	psync := generateCommand("PSYNC", "?", "-1")
+	psync := commands.Generate("PSYNC", "?", "-1")
 	master_conn.Write(psync.Encode())
 	_, raw := resp.Decode(master_conn.ByteChan)
 	res, ok := resp.ToString(raw)
