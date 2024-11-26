@@ -291,7 +291,7 @@ func handlePsyncCommand(call resp.Array, conn *core.Conn, store *core.Store) res
 		return resp.SimpleError("no master_repl_offset found")
 	}
 	res := resp.SimpleString(strings.Join(strs, " "))
-	writeToConnection(conn, res.Encode())
+	conn.Write(res.Encode())
 	sendCurrentState(conn)
 	conn.Mu.Lock()
 	conn.Total_propagated = 0
@@ -820,14 +820,14 @@ func sendCurrentState(conn *core.Conn) {
 	data := generateRDBFile(nil)
 	res := resp.BulkString(data).Encode()
 	res = res[:len(res)-2]
-	writeToConnection(conn, res)
+	conn.Write(res)
 }
 
 func propagateToReplicas(call resp.Array, store *core.Store) {
 	res := call.Encode()
 	for _, conn := range store.Replicas {
 		fmt.Printf("Propagating %v to replica %v\n", call, conn.Conn.LocalAddr())
-		writeToConnection(conn, res)
+		conn.Write(res)
 		conn.Mu.Lock()
 		conn.Total_propagated += len(res)
 		conn.Expected_offset = conn.Total_propagated
@@ -857,7 +857,7 @@ func sendAckToReplica(conn *core.Conn) {
 	}
 	conn.Expected_offset = conn.Total_propagated
 	res := generateCommand("REPLCONF", "GETACK", "*").Encode()
-	writeToConnection(conn, res)
+	conn.Write(res)
 	conn.Total_propagated += len(res)
 	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
 	conn.Mu.Unlock()

@@ -48,7 +48,7 @@ func TestServerRespondsToPing(t *testing.T) {
 
 	conn := core.NewConn(c, core.ConnRelationTypeEnum.NORMAL)
 	command := generateCommand("PING")
-	writeToConnection(conn, command.Encode())
+	conn.Write(command.Encode())
 
 	buf := make([]byte, 7)
 	n, err := conn.Conn.Read(buf)

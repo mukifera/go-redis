@@ -109,7 +109,7 @@ func acceptCommands(conn *core.Conn, store *core.Store) {
 
 		res := acceptCommand(call, conn, store)
 		if res != nil {
-			writeToConnection(conn, res.Encode())
+			conn.Write(res.Encode())
 		}
 
 		command_name, _ := getCommandName(call)
@@ -128,21 +128,6 @@ func acceptCommands(conn *core.Conn, store *core.Store) {
 func acceptCommand(command resp.Object, conn *core.Conn, store *core.Store) resp.Object {
 	call := getRespArrayCall(command)
 	return handleCommand(call, conn, store)
-}
-
-func writeToConnection(conn *core.Conn, data []byte) {
-	current := 0
-	for current < len(data) {
-		n, err := conn.Conn.Write(data[current:])
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
-			return
-		}
-		current += n
-	}
-	if conn.Relation != core.ConnRelationTypeEnum.REPLICA {
-		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.Conn.RemoteAddr(), strconv.Quote(string(data)))
-	}
 }
 
 func readFromConnection(conn *core.Conn) {
@@ -197,7 +182,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")
-	writeToConnection(master_conn, ping.Encode())
+	master_conn.Write(ping.Encode())
 	if !waitForResponse("PONG", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
 		os.Exit(1)
@@ -205,7 +190,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping.Encode())))
 
 	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
-	writeToConnection(master_conn, replconf.Encode())
+	master_conn.Write(replconf.Encode())
 	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
@@ -213,7 +198,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
-	writeToConnection(master_conn, replconf.Encode())
+	master_conn.Write(replconf.Encode())
 	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
@@ -221,7 +206,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
 	psync := generateCommand("PSYNC", "?", "-1")
-	writeToConnection(master_conn, psync.Encode())
+	master_conn.Write(psync.Encode())
 	_, raw := resp.Decode(master_conn.ByteChan)
 	res, ok := resp.ToString(raw)
 	if !ok {
