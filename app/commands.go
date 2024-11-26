@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/core"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
-type commandHandlerFunc func(resp.Array, *redisConn, *redisStore) resp.Object
+type commandHandlerFunc func(resp.Array, *core.Conn, *core.Store) resp.Object
 type commandHandlerFuncs map[string]commandHandlerFunc
 
 func getCommandName(call resp.Array) (string, bool) {
@@ -36,21 +37,21 @@ func getRespArrayCall(obj resp.Object) resp.Array {
 	}
 }
 
-func handleCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 
 	command, ok := getCommandName(call)
 	if !ok {
 		return resp.SimpleError("expected command name as string")
 	}
 
-	conn.mu.Lock()
-	if conn.multi && command != "EXEC" && command != "DISCARD" {
+	conn.Mu.Lock()
+	if conn.Multi && command != "EXEC" && command != "DISCARD" {
 		fmt.Printf("Queued command %v\n", call)
-		conn.queued = append(conn.queued, call)
-		conn.mu.Unlock()
+		conn.Queued = append(conn.Queued, call)
+		conn.Mu.Unlock()
 		return resp.SimpleString("QUEUED")
 	}
-	conn.mu.Unlock()
+	conn.Mu.Unlock()
 
 	fmt.Printf("Received command %v\n", call)
 
@@ -83,14 +84,14 @@ func handleCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Obj
 	return handler(call, conn, store)
 }
 
-func handlePingCommand(_ resp.Array, conn *redisConn, store *redisStore) resp.Object {
-	if store.master == nil || conn.conn != store.master.conn {
+func handlePingCommand(_ resp.Array, conn *core.Conn, store *core.Store) resp.Object {
+	if store.Master == nil || conn.Conn != store.Master.Conn {
 		return resp.SimpleString("PONG")
 	}
 	return nil
 }
 
-func handleEchoCommand(call resp.Array, conn *redisConn, _ *redisStore) resp.Object {
+func handleEchoCommand(call resp.Array, conn *core.Conn, _ *core.Store) resp.Object {
 	key, ok := call[1].(resp.BulkString)
 	if !ok {
 		return resp.SimpleError("expected command name as string")
@@ -98,7 +99,7 @@ func handleEchoCommand(call resp.Array, conn *redisConn, _ *redisStore) resp.Obj
 	return resp.BulkString(key)
 }
 
-func handleSetCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleSetCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 3 && len(call) != 5 {
 		return resp.SimpleError("invalid number of arguments to SET command")
 	}
@@ -127,18 +128,18 @@ func handleSetCommand(call resp.Array, conn *redisConn, store *redisStore) resp.
 				return resp.SimpleError(fmt.Sprintf("expected expiry value to be an integer: %v\n", err))
 			}
 		}
-		store.setWithExpiry(string(key), value, expiry)
+		store.SetWithExpiry(string(key), value, expiry)
 	} else {
-		store.set(string(key), call[2])
+		store.Set(string(key), call[2])
 	}
 
-	if store.master == nil || conn.conn != store.master.conn {
+	if store.Master == nil || conn.Conn != store.Master.Conn {
 		return resp.SimpleString("OK")
 	}
 	return nil
 }
 
-func handleGetCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleGetCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of arguments to GET command")
 	}
@@ -146,17 +147,17 @@ func handleGetCommand(call resp.Array, conn *redisConn, store *redisStore) resp.
 	if !ok {
 		return resp.SimpleError("key must be a string")
 	}
-	res, ok := store.get(string(key))
+	res, ok := store.Get(string(key))
 	if !ok {
 		res = resp.NullBulkString{}
 	}
-	if store.master == nil || conn.conn != store.master.conn {
+	if store.Master == nil || conn.Conn != store.Master.Conn {
 		return res
 	}
 	return nil
 }
 
-func handleConfigCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleConfigCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 3 {
 		return resp.SimpleError("invalid number of arguments to CONFIG command")
 	}
@@ -171,7 +172,7 @@ func handleConfigCommand(call resp.Array, conn *redisConn, store *redisStore) re
 	if !ok {
 		return resp.SimpleError("expected a string param")
 	}
-	value, ok := store.getParam(string(param))
+	value, ok := store.GetParam(string(param))
 	var vals resp.Array = []resp.Object{param}
 	if !ok {
 		vals = append(vals, nil)
@@ -182,7 +183,7 @@ func handleConfigCommand(call resp.Array, conn *redisConn, store *redisStore) re
 	return vals
 }
 
-func handleKeysCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleKeysCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of arguments to CONFIG command")
 	}
@@ -192,7 +193,7 @@ func handleKeysCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 		return resp.SimpleError("expected a string search parameter")
 	}
 
-	keys := store.getKeys(string(search))
+	keys := store.GetKeys(string(search))
 	var res resp.Array = make([]resp.Object, len(keys))
 	for i := 0; i < len(keys); i++ {
 		res[i] = resp.BulkString(keys[i])
@@ -200,7 +201,7 @@ func handleKeysCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	return res
 }
 
-func handleInfoCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleInfoCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of arguments to INFO command")
 	}
@@ -214,13 +215,13 @@ func handleInfoCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	}
 
 	role := "master"
-	if _, ok := store.getParam("replicaof"); ok {
+	if _, ok := store.GetParam("replicaof"); ok {
 		role = "slave"
 	}
 	strs := []string{"role:" + role}
 	if role == "master" {
-		master_replid, _ := store.getParam("master_replid")
-		master_repl_offset, _ := store.getParam("master_repl_offset")
+		master_replid, _ := store.GetParam("master_replid")
+		master_repl_offset, _ := store.GetParam("master_repl_offset")
 		strs = append(strs, "master_replid:"+master_replid)
 		strs = append(strs, "master_repl_offset:"+master_repl_offset)
 	}
@@ -230,7 +231,7 @@ func handleInfoCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	return res
 }
 
-func handleReplconfCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleReplconfCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) < 2 {
 		return resp.SimpleError("invalid number of arguments to REPLCONF command")
 	}
@@ -246,29 +247,29 @@ func handleReplconfCommand(call resp.Array, conn *redisConn, store *redisStore) 
 		if !ok {
 			return resp.SimpleError("invalid listening port")
 		}
-		_, ok = conn.conn.RemoteAddr().(*net.TCPAddr)
+		_, ok = conn.Conn.RemoteAddr().(*net.TCPAddr)
 		if !ok {
 			return resp.SimpleError("invalid TCP host")
 		}
 
-		store.addReplica(conn)
+		store.AddReplica(conn)
 		res = resp.SimpleString("OK")
 
 	case "GETACK":
-		conn.mu.Lock()
-		res = generateCommand("REPLCONF", "ACK", strconv.Itoa(conn.offset))
-		fmt.Printf("offset = %d\n", conn.offset)
-		conn.mu.Unlock()
+		conn.Mu.Lock()
+		res = generateCommand("REPLCONF", "ACK", strconv.Itoa(conn.Offset))
+		fmt.Printf("offset = %d\n", conn.Offset)
+		conn.Mu.Unlock()
 
 	case "ACK":
 		num, ok := resp.ToInt(call[2])
 		if !ok {
 			return resp.SimpleError("invalid response to ACK")
 		}
-		conn.mu.Lock()
-		conn.offset = num
-		fmt.Printf("offset for replica %v is %d\n", conn.conn.RemoteAddr(), conn.offset)
-		conn.mu.Unlock()
+		conn.Mu.Lock()
+		conn.Offset = num
+		fmt.Printf("offset for replica %v is %d\n", conn.Conn.RemoteAddr(), conn.Offset)
+		conn.Mu.Unlock()
 		return nil
 
 	default:
@@ -277,34 +278,34 @@ func handleReplconfCommand(call resp.Array, conn *redisConn, store *redisStore) 
 	return res
 }
 
-func handlePsyncCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handlePsyncCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	strs := make([]string, 3)
 	strs[0] = "FULLRESYNC"
 	ok := true
-	strs[1], ok = store.getParam("master_replid")
+	strs[1], ok = store.GetParam("master_replid")
 	if !ok {
 		return resp.SimpleError("no master_replid found")
 	}
-	strs[2], ok = store.getParam("master_repl_offset")
+	strs[2], ok = store.GetParam("master_repl_offset")
 	if !ok {
 		return resp.SimpleError("no master_repl_offset found")
 	}
 	res := resp.SimpleString(strings.Join(strs, " "))
 	writeToConnection(conn, res.Encode())
 	sendCurrentState(conn)
-	conn.mu.Lock()
-	conn.total_propagated = 0
-	conn.offset = 0
-	conn.mu.Unlock()
+	conn.Mu.Lock()
+	conn.Total_propagated = 0
+	conn.Offset = 0
+	conn.Mu.Unlock()
 
-	conn.ticker = time.NewTicker(200 * time.Millisecond)
-	conn.stopChan = make(chan bool)
+	conn.Ticker = time.NewTicker(200 * time.Millisecond)
+	conn.StopChan = make(chan bool)
 	go sendAcksToReplica(conn)
 
 	return nil
 }
 
-func handleWaitCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleWaitCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 3 {
 		return resp.SimpleError("invalid number of arguments to WAIT command")
 	}
@@ -319,7 +320,7 @@ func handleWaitCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 		return resp.SimpleError("expected timeout to be an integer")
 	}
 
-	for _, replica := range store.replicas {
+	for _, replica := range store.Replicas {
 		sendAckToReplica(replica)
 	}
 
@@ -328,12 +329,12 @@ func handleWaitCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	timed_out := false
 	update_replication_count := func() {
 		replicatation_count = 0
-		for _, replica := range store.replicas {
-			replica.mu.Lock()
-			if replica.expected_offset == replica.offset {
+		for _, replica := range store.Replicas {
+			replica.Mu.Lock()
+			if replica.Expected_offset == replica.Offset {
 				replicatation_count++
 			}
-			replica.mu.Unlock()
+			replica.Mu.Unlock()
 		}
 	}
 	for replicatation_count < numreplicas && !timed_out {
@@ -350,7 +351,7 @@ func handleWaitCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	return res
 }
 
-func handleTypeCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleTypeCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of arguments to TYPE command")
 	}
@@ -360,12 +361,12 @@ func handleTypeCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 		return resp.SimpleError("expected a string value for key")
 	}
 
-	value_type := store.typeOfValue(key)
+	value_type := store.TypeOfValue(key)
 	res := resp.SimpleString(value_type)
 	return res
 }
 
-func handleXaddCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleXaddCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) < 3 {
 		return resp.SimpleError("invalid number of arguments to XADD command")
 	}
@@ -375,7 +376,7 @@ func handleXaddCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 		return resp.SimpleError("expected a string stream key")
 	}
 
-	raw_stream, ok := store.get(key)
+	raw_stream, ok := store.Get(key)
 	stream := &resp.Stream{}
 	if ok {
 		stream, ok = raw_stream.(*resp.Stream)
@@ -411,13 +412,13 @@ func handleXaddCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	stream.Mu.Lock()
 	stream.AddEntry(id, data)
 	stream.Mu.Unlock()
-	store.set(key, stream)
+	store.Set(key, stream)
 
 	res := resp.BulkString(id)
 	return res
 }
 
-func handleXrangeCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleXrangeCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 4 {
 		return resp.SimpleError("ERR invalid number of arguments to XRANGE command")
 	}
@@ -428,7 +429,7 @@ func handleXrangeCommand(call resp.Array, conn *redisConn, store *redisStore) re
 		return res
 	}
 
-	stream_raw, ok := store.get(key)
+	stream_raw, ok := store.Get(key)
 	if !ok {
 		return resp.SimpleError("ERR key does not exist in store")
 	}
@@ -482,7 +483,7 @@ func handleXrangeCommand(call resp.Array, conn *redisConn, store *redisStore) re
 	return res
 }
 
-func handleXreadCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleXreadCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) < 4 || len(call)%2 != 0 {
 		return resp.SimpleError("ERR invalid number of arguments to XREAD command")
 	}
@@ -525,7 +526,7 @@ func handleXreadCommand(call resp.Array, conn *redisConn, store *redisStore) res
 			return resp.SimpleError("ERR expected a string for stream key")
 		}
 
-		stream_raw, ok := store.get(key)
+		stream_raw, ok := store.Get(key)
 		if !ok {
 			return resp.SimpleError("ERR key does not exist in store")
 		}
@@ -556,7 +557,7 @@ func handleXreadCommand(call resp.Array, conn *redisConn, store *redisStore) res
 	return res
 }
 
-func handleIncrCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
+func handleIncrCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
 	if len(call) != 2 {
 		return resp.SimpleError("invalid number of commands to INCR command")
 	}
@@ -566,7 +567,7 @@ func handleIncrCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 		return resp.SimpleError("expected a string key")
 	}
 
-	value_raw, key_exists := store.get(key)
+	value_raw, key_exists := store.Get(key)
 
 	var value int
 
@@ -583,29 +584,29 @@ func handleIncrCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	}
 
 	str := resp.BulkString(strconv.Itoa(value))
-	store.set(key, str)
+	store.Set(key, str)
 
 	return resp.Integer(value)
 }
 
-func handleMultiCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
-	conn.mu.Lock()
-	conn.multi = true
-	conn.mu.Unlock()
+func handleMultiCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
+	conn.Mu.Lock()
+	conn.Multi = true
+	conn.Mu.Unlock()
 	return resp.SimpleString("OK")
 }
 
-func handleExecCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
-	conn.mu.Lock()
-	if !conn.multi {
-		conn.mu.Unlock()
+func handleExecCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
+	conn.Mu.Lock()
+	if !conn.Multi {
+		conn.Mu.Unlock()
 		return resp.SimpleError("ERR EXEC without MULTI")
 	}
-	conn.multi = false
-	conn.mu.Unlock()
+	conn.Multi = false
+	conn.Mu.Unlock()
 
 	res := resp.Array{}
-	for _, sub_call := range conn.queued {
+	for _, sub_call := range conn.Queued {
 		sub := acceptCommand(sub_call, conn, store)
 		res = append(res, sub)
 	}
@@ -613,14 +614,14 @@ func handleExecCommand(call resp.Array, conn *redisConn, store *redisStore) resp
 	return res
 }
 
-func handleDiscardCommand(call resp.Array, conn *redisConn, store *redisStore) resp.Object {
-	conn.mu.Lock()
-	defer conn.mu.Unlock()
-	if !conn.multi {
+func handleDiscardCommand(call resp.Array, conn *core.Conn, store *core.Store) resp.Object {
+	conn.Mu.Lock()
+	defer conn.Mu.Unlock()
+	if !conn.Multi {
 		return resp.SimpleError("ERR DISCARD without MULTI")
 	}
-	conn.multi = false
-	conn.queued = make([]resp.Object, 0)
+	conn.Multi = false
+	conn.Queued = make([]resp.Object, 0)
 	return resp.SimpleString("OK")
 }
 
@@ -815,49 +816,49 @@ func compareStreamIDs(a string, b string) int {
 	return 1
 }
 
-func sendCurrentState(conn *redisConn) {
+func sendCurrentState(conn *core.Conn) {
 	data := generateRDBFile(nil)
 	res := resp.BulkString(data).Encode()
 	res = res[:len(res)-2]
 	writeToConnection(conn, res)
 }
 
-func propagateToReplicas(call resp.Array, store *redisStore) {
+func propagateToReplicas(call resp.Array, store *core.Store) {
 	res := call.Encode()
-	for _, conn := range store.replicas {
-		fmt.Printf("Propagating %v to replica %v\n", call, conn.conn.LocalAddr())
+	for _, conn := range store.Replicas {
+		fmt.Printf("Propagating %v to replica %v\n", call, conn.Conn.LocalAddr())
 		writeToConnection(conn, res)
-		conn.mu.Lock()
-		conn.total_propagated += len(res)
-		conn.expected_offset = conn.total_propagated
-		fmt.Printf("sent %d bytes to replica %v: %s\n", len(res), conn.conn.RemoteAddr(), strconv.Quote(string(res)))
-		fmt.Printf("total_propagated = %d, offset = %d\n", conn.total_propagated, conn.offset)
-		conn.mu.Unlock()
+		conn.Mu.Lock()
+		conn.Total_propagated += len(res)
+		conn.Expected_offset = conn.Total_propagated
+		fmt.Printf("sent %d bytes to replica %v: %s\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
+		fmt.Printf("total_propagated = %d, offset = %d\n", conn.Total_propagated, conn.Offset)
+		conn.Mu.Unlock()
 	}
 }
 
-func sendAcksToReplica(conn *redisConn) {
-	defer conn.ticker.Stop()
+func sendAcksToReplica(conn *core.Conn) {
+	defer conn.Ticker.Stop()
 	for {
 		select {
-		case <-conn.ticker.C:
+		case <-conn.Ticker.C:
 			sendAckToReplica(conn)
-		case <-conn.stopChan:
+		case <-conn.StopChan:
 			return
 		}
 	}
 }
 
-func sendAckToReplica(conn *redisConn) {
-	conn.mu.Lock()
-	if conn.offset == conn.expected_offset {
-		conn.mu.Unlock()
+func sendAckToReplica(conn *core.Conn) {
+	conn.Mu.Lock()
+	if conn.Offset == conn.Expected_offset {
+		conn.Mu.Unlock()
 		return
 	}
-	conn.expected_offset = conn.total_propagated
+	conn.Expected_offset = conn.Total_propagated
 	res := generateCommand("REPLCONF", "GETACK", "*").Encode()
 	writeToConnection(conn, res)
-	conn.total_propagated += len(res)
-	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.conn.RemoteAddr(), strconv.Quote(string(res)))
-	conn.mu.Unlock()
+	conn.Total_propagated += len(res)
+	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.Conn.RemoteAddr(), strconv.Quote(string(res)))
+	conn.Mu.Unlock()
 }
