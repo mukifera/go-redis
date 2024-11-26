@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/codecrafters-io/redis-starter-go/app/core"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -49,17 +50,17 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 	}
 	defer l.Close()
 
-	var store *redisStore
-	store = new(redisStore)
-	store.init()
+	var store *core.Store
+	store = new(core.Store)
+	store.Init()
 	rdb_file := filepath.Join(flags.dir, flags.dbfilename)
 
 	store, err = readRDBFile(rdb_file)
 	if err != nil {
 		return err
 	}
-	store.setParam("dir", flags.dir)
-	store.setParam("dbfilename", flags.dbfilename)
+	store.SetParam("dir", flags.dir)
+	store.SetParam("dbfilename", flags.dbfilename)
 
 	if flags.replicaof != "" {
 		strs := strings.Split(flags.replicaof, " ")
@@ -67,13 +68,13 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 			return fmt.Errorf("malformed value for --replicaof flag")
 		}
 		ip_port := strings.Join(strs, ":")
-		store.setParam("replicaof", ip_port)
+		store.SetParam("replicaof", ip_port)
 
-		store.master = performMasterHandshake(flags.port, ip_port, store)
+		store.Master = performMasterHandshake(flags.port, ip_port, store)
 
 	} else {
-		store.setParam("master_replid", generateRandomID(40))
-		store.setParam("master_repl_offset", "0")
+		store.SetParam("master_replid", generateRandomID(40))
+		store.SetParam("master_repl_offset", "0")
 	}
 
 	for {
@@ -92,17 +93,17 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 	}
 }
 
-func handleConnection(conn net.Conn, store *redisStore) {
+func handleConnection(conn net.Conn, store *core.Store) {
 	defer conn.Close()
-	new_conn := newRedisConn(conn, connRelationTypeEnum.NORMAL)
+	new_conn := core.NewConn(conn, core.ConnRelationTypeEnum.NORMAL)
 	go readFromConnection(new_conn)
 	acceptCommands(new_conn, store)
 }
 
-func acceptCommands(conn *redisConn, store *redisStore) {
+func acceptCommands(conn *core.Conn, store *core.Store) {
 	for {
-		n, response := resp.Decode(conn.byteChan)
-		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
+		n, response := resp.Decode(conn.ByteChan)
+		fmt.Printf("decoded %d bytes from %v\n", n, conn.Conn.RemoteAddr())
 
 		call := getRespArrayCall(response)
 
@@ -116,40 +117,40 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 			propagateToReplicas(call, store)
 		}
 
-		if store.master != nil && conn.conn == store.master.conn {
-			conn.mu.Lock()
-			conn.offset += n
-			conn.mu.Unlock()
+		if store.Master != nil && conn.Conn == store.Master.Conn {
+			conn.Mu.Lock()
+			conn.Offset += n
+			conn.Mu.Unlock()
 		}
 	}
 }
 
-func acceptCommand(command resp.Object, conn *redisConn, store *redisStore) resp.Object {
+func acceptCommand(command resp.Object, conn *core.Conn, store *core.Store) resp.Object {
 	call := getRespArrayCall(command)
 	return handleCommand(call, conn, store)
 }
 
-func writeToConnection(conn *redisConn, data []byte) {
+func writeToConnection(conn *core.Conn, data []byte) {
 	current := 0
 	for current < len(data) {
-		n, err := conn.conn.Write(data[current:])
+		n, err := conn.Conn.Write(data[current:])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to write to connection: %v\n", err)
 			return
 		}
 		current += n
 	}
-	if conn.relation != connRelationTypeEnum.REPLICA {
-		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.conn.RemoteAddr(), strconv.Quote(string(data)))
+	if conn.Relation != core.ConnRelationTypeEnum.REPLICA {
+		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.Conn.RemoteAddr(), strconv.Quote(string(data)))
 	}
 }
 
-func readFromConnection(conn *redisConn) {
-	defer close(conn.byteChan)
+func readFromConnection(conn *core.Conn) {
+	defer close(conn.ByteChan)
 
 	for {
 		buf := make([]byte, 1024)
-		n, err := conn.conn.Read(buf)
+		n, err := conn.Conn.Read(buf)
 		if err == io.EOF {
 			continue
 		}
@@ -157,9 +158,9 @@ func readFromConnection(conn *redisConn) {
 			fmt.Fprintf(os.Stderr, "Failed to read from connection: %v\n", err)
 			return
 		}
-		fmt.Printf("read %d bytes from %v: %s\n", n, conn.conn.RemoteAddr(), strconv.Quote(string(buf[:n])))
+		fmt.Printf("read %d bytes from %v: %s\n", n, conn.Conn.RemoteAddr(), strconv.Quote(string(buf[:n])))
 		for i := 0; i < n; i++ {
-			conn.byteChan <- buf[i]
+			conn.ByteChan <- buf[i]
 		}
 	}
 }
@@ -184,7 +185,7 @@ func generateCommand(strs ...string) resp.Array {
 	return arr
 }
 
-func performMasterHandshake(listening_port string, master_ip_port string, store *redisStore) *redisConn {
+func performMasterHandshake(listening_port string, master_ip_port string, store *core.Store) *core.Conn {
 
 	conn, err := net.Dial("tcp", master_ip_port)
 	if err != nil {
@@ -192,12 +193,12 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 		os.Exit(1)
 	}
 
-	master_conn := newRedisConn(conn, connRelationTypeEnum.MASTER)
+	master_conn := core.NewConn(conn, core.ConnRelationTypeEnum.MASTER)
 	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")
 	writeToConnection(master_conn, ping.Encode())
-	if !waitForResponse("PONG", master_conn.byteChan) {
+	if !waitForResponse("PONG", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
 		os.Exit(1)
 	}
@@ -205,7 +206,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
 	writeToConnection(master_conn, replconf.Encode())
-	if !waitForResponse("OK", master_conn.byteChan) {
+	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
 	}
@@ -213,7 +214,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
 	writeToConnection(master_conn, replconf.Encode())
-	if !waitForResponse("OK", master_conn.byteChan) {
+	if !waitForResponse("OK", master_conn.ByteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
 	}
@@ -221,7 +222,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	psync := generateCommand("PSYNC", "?", "-1")
 	writeToConnection(master_conn, psync.Encode())
-	_, raw := resp.Decode(master_conn.byteChan)
+	_, raw := resp.Decode(master_conn.ByteChan)
 	res, ok := resp.ToString(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
@@ -235,14 +236,14 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 
 	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync.Encode())))
 
-	if <-master_conn.byteChan != '$' {
+	if <-master_conn.ByteChan != '$' {
 		fmt.Fprintf(os.Stderr, "expected an RDB file\n")
 		os.Exit(1)
 	}
-	_, raw_int := resp.DecodeInteger(master_conn.byteChan)
+	_, raw_int := resp.DecodeInteger(master_conn.ByteChan)
 	n := int(raw_int)
 	for i := 0; i < n; i++ {
-		<-master_conn.byteChan
+		<-master_conn.ByteChan
 	}
 
 	go acceptCommands(master_conn, store)
