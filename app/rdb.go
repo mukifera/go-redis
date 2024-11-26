@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/codecrafters-io/redis-starter-go/app/core"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -62,10 +63,10 @@ var rdbValueTypes = struct {
 	LIST_QUICKLIST:     14,
 }
 
-func readRDBFile(filename string) (*redisStore, error) {
-	var store redisStore
+func readRDBFile(filename string) (*core.Store, error) {
+	var store core.Store
 	var current uint64 = 9
-	store.init()
+	store.Init()
 
 	data, err := os.ReadFile(filename)
 	if errors.Is(err, os.ErrNotExist) {
@@ -89,7 +90,7 @@ func readRDBFile(filename string) (*redisStore, error) {
 			current += n
 			n, value := readEncodedString(data[current:])
 			current += n
-			store.setParam(key, value)
+			store.SetParam(key, value)
 
 		case opCodes.RESIZEDB:
 			n, kv_size := readLengthEncodedInt(data[current:])
@@ -103,14 +104,14 @@ func readRDBFile(filename string) (*redisStore, error) {
 			current += 8
 			n, key, value := readKeyValue(data[current:])
 			current += n
-			store.setWithAbsoluteExpiry(key, value, expiry)
+			store.SetWithAbsoluteExpiry(key, value, expiry)
 
 		case opCodes.EXPIRETIME:
 			expiry := uint64(binary.LittleEndian.Uint32(data[current:]))
 			current += 4
 			n, key, value := readKeyValue(data[current:])
 			current += n
-			store.setWithAbsoluteExpiry(key, value, expiry*1000)
+			store.SetWithAbsoluteExpiry(key, value, expiry*1000)
 
 		case opCodes.SELECTDB:
 			n, size, content_type := readEncodedSize(data[current:])
@@ -126,7 +127,7 @@ func readRDBFile(filename string) (*redisStore, error) {
 			current -= 1
 			n, key, value := readKeyValue(data[current:])
 			current += n
-			store.set(key, value)
+			store.Set(key, value)
 
 		default:
 			return &store, errors.New("malformed RDB file")
@@ -280,7 +281,7 @@ func readRDBSet(data []byte) (bytes_read uint64, set map[resp.Object]struct{}) {
 	return
 }
 
-func generateRDBFile(_ *redisStore) []byte {
+func generateRDBFile(_ *core.Store) []byte {
 	hex_str := "524544495330303131fa0972656469732d76657205372e322e30fa0a72656469732d62697473c040fa056374696d65c26d08bc65fa08757365642d6d656dc2b0c41000fa08616f662d62617365c000fff06e3bfec0ff5aa2"
 	data, _ := hex.DecodeString(hex_str)
 	return data
