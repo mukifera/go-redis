@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"testing"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/core"
 )
 
 func TestServerStarts(t *testing.T) {
@@ -44,12 +46,12 @@ func TestServerRespondsToPing(t *testing.T) {
 		t.Fatalf("Cannot listen to port 8888: %v\n", err)
 	}
 
-	conn := newRedisConn(c, connRelationTypeEnum.NORMAL)
+	conn := core.NewConn(c, core.ConnRelationTypeEnum.NORMAL)
 	command := generateCommand("PING")
 	writeToConnection(conn, command.Encode())
 
 	buf := make([]byte, 7)
-	n, err := conn.conn.Read(buf)
+	n, err := conn.Conn.Read(buf)
 	if n != 7 || err != nil {
 		t.Fatalf("Invalid response to ping\n")
 	}
