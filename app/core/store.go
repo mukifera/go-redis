@@ -20,7 +20,7 @@ var connRelationTypeEnum = struct {
 	REPLICA: 2,
 }
 
-type redisConn struct {
+type Conn struct {
 	conn             net.Conn
 	byteChan         chan byte
 	stopChan         chan bool
@@ -34,17 +34,17 @@ type redisConn struct {
 	mu               sync.Mutex
 }
 
-type redisStore struct {
+type Store struct {
 	dict     map[string]resp.Object
 	expiry   map[interface{}]int64
 	params   map[string]string
-	replicas []*redisConn
-	master   *redisConn
+	replicas []*Conn
+	master   *Conn
 	mu       sync.Mutex
 }
 
-func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
-	return &redisConn{
+func newRedisConn(conn net.Conn, relation_type connRelationType) *Conn {
+	return &Conn{
 		conn:             conn,
 		byteChan:         make(chan byte, 1<<14),
 		stopChan:         make(chan bool),
@@ -59,31 +59,31 @@ func newRedisConn(conn net.Conn, relation_type connRelationType) *redisConn {
 	}
 }
 
-func (s *redisStore) init() {
+func (s *Store) init() {
 	s.dict = make(map[string]resp.Object)
 	s.expiry = make(map[interface{}]int64)
 	s.params = make(map[string]string)
-	s.replicas = make([]*redisConn, 0)
+	s.replicas = make([]*Conn, 0)
 }
 
-func (s *redisStore) set(key string, value resp.Object) {
+func (s *Store) set(key string, value resp.Object) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 }
 
-func (s *redisStore) setWithExpiry(key string, value resp.Object, expiry uint64) {
+func (s *Store) setWithExpiry(key string, value resp.Object, expiry uint64) {
 	s.setWithAbsoluteExpiry(key, value, uint64(time.Now().Add(time.Duration(expiry)*time.Millisecond).UnixMilli()))
 }
 
-func (s *redisStore) setWithAbsoluteExpiry(key string, value resp.Object, expiry uint64) {
+func (s *Store) setWithAbsoluteExpiry(key string, value resp.Object, expiry uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.dict[key] = value
 	s.expiry[key] = int64(expiry)
 }
 
-func (s *redisStore) get(key string) (resp.Object, bool) {
+func (s *Store) get(key string) (resp.Object, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	value, in_dict := s.dict[key]
@@ -96,18 +96,18 @@ func (s *redisStore) get(key string) (resp.Object, bool) {
 	return value, in_dict
 }
 
-func (s *redisStore) setParam(key string, value string) {
+func (s *Store) setParam(key string, value string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.params[key] = value
 }
 
-func (s *redisStore) getParam(key string) (string, bool) {
+func (s *Store) getParam(key string) (string, bool) {
 	value, ok := s.params[key]
 	return value, ok
 }
 
-func (s *redisStore) getKeys(_ string) []string {
+func (s *Store) getKeys(_ string) []string {
 	keys := make([]string, len(s.dict))
 	i := 0
 	for key := range s.dict {
@@ -117,14 +117,14 @@ func (s *redisStore) getKeys(_ string) []string {
 	return keys
 }
 
-func (s *redisStore) addReplica(conn *redisConn) {
+func (s *Store) addReplica(conn *Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.replicas = append(s.replicas, conn)
 	conn.relation = connRelationTypeEnum.REPLICA
 }
 
-func (s *redisStore) typeOfValue(key string) string {
+func (s *Store) typeOfValue(key string) string {
 	value, ok := s.get(key)
 	if !ok {
 		return "none"
