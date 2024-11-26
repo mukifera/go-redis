@@ -5,28 +5,28 @@ import (
 	"sync"
 )
 
-type respObject interface {
+type Object interface {
 	encode() []byte
 }
 
-type respSimpleString string
-type respSimpleError string
-type respInteger int
-type respBulkString string
-type respNullBulkString struct{}
-type respArray []respObject
-type respSet map[respObject]struct{}
-type respMap map[respObject]respObject
-type respBoolean bool
-type respStream struct {
+type SimpleString string
+type SimpleError string
+type Integer int
+type BulkString string
+type NullBulkString struct{}
+type Array []Object
+type Set map[Object]struct{}
+type Map map[Object]Object
+type Boolean bool
+type Stream struct {
 	mu      sync.Mutex
 	entries []struct {
 		id   string
-		data map[string]respObject
+		data map[string]Object
 	}
 }
 
-func (r respSimpleString) encode() []byte {
+func (r SimpleString) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '+')
 	ret = append(ret, r...)
@@ -34,7 +34,7 @@ func (r respSimpleString) encode() []byte {
 	return ret
 }
 
-func (r respSimpleError) encode() []byte {
+func (r SimpleError) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '-')
 	ret = append(ret, r...)
@@ -42,7 +42,7 @@ func (r respSimpleError) encode() []byte {
 	return ret
 }
 
-func (r respInteger) encode() []byte {
+func (r Integer) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, ':')
 	if r < 0 {
@@ -54,7 +54,7 @@ func (r respInteger) encode() []byte {
 	return ret
 }
 
-func (r respBulkString) encode() []byte {
+func (r BulkString) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '$')
 	ret = append(ret, strconv.Itoa(len(r))...)
@@ -64,11 +64,11 @@ func (r respBulkString) encode() []byte {
 	return ret
 }
 
-func (r respNullBulkString) encode() []byte {
+func (r NullBulkString) encode() []byte {
 	return []byte("$-1\r\n")
 }
 
-func (r respArray) encode() []byte {
+func (r Array) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '*')
 	ret = append(ret, strconv.Itoa(len(r))...)
@@ -79,7 +79,7 @@ func (r respArray) encode() []byte {
 	return ret
 }
 
-func (r respSet) encode() []byte {
+func (r Set) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '~')
 	ret = append(ret, strconv.Itoa(len(r))...)
@@ -90,7 +90,7 @@ func (r respSet) encode() []byte {
 	return ret
 }
 
-func (r respBoolean) encode() []byte {
+func (r Boolean) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '#')
 	if r {
@@ -102,7 +102,7 @@ func (r respBoolean) encode() []byte {
 	return ret
 }
 
-func (r respMap) encode() []byte {
+func (r Map) encode() []byte {
 	ret := make([]byte, 0)
 	ret = append(ret, '%')
 	ret = append(ret, strconv.Itoa(len(r))...)
@@ -114,42 +114,42 @@ func (r respMap) encode() []byte {
 	return ret
 }
 
-func (r respStream) encode() []byte {
+func (r Stream) encode() []byte {
 	return nil
 }
 
-func (r *respStream) addEntry(id string, data map[string]respObject) {
+func (r *Stream) addEntry(id string, data map[string]Object) {
 	r.entries = append(r.entries, struct {
 		id   string
-		data map[string]respObject
+		data map[string]Object
 	}{
 		id:   id,
 		data: data,
 	})
 }
 
-func stringArrayToResp(arr []string) respArray {
-	var ret respArray = make([]respObject, len(arr))
+func stringArrayToResp(arr []string) Array {
+	var ret Array = make([]Object, len(arr))
 	for i := 0; i < len(arr); i++ {
-		ret[i] = respBulkString(arr[i])
+		ret[i] = BulkString(arr[i])
 	}
 	return ret
 }
 
-func respToString(obj respObject) (string, bool) {
-	simple, ok := obj.(respSimpleString)
+func respToString(obj Object) (string, bool) {
+	simple, ok := obj.(SimpleString)
 	if ok {
 		return string(simple), true
 	}
-	bulk, ok := obj.(respBulkString)
+	bulk, ok := obj.(BulkString)
 	if ok {
 		return string(bulk), true
 	}
 	return "", false
 }
 
-func respToInt(obj respObject) (int, bool) {
-	integer, ok := obj.(respInteger)
+func respToInt(obj Object) (int, bool) {
+	integer, ok := obj.(Integer)
 	if ok {
 		return int(integer), true
 	}
@@ -163,16 +163,16 @@ func respToInt(obj respObject) (int, bool) {
 	return 0, false
 }
 
-func decode(in <-chan byte) (n int, ret respObject) {
+func decode(in <-chan byte) (n int, ret Object) {
 
 	ch := <-in
 	switch ch {
 	case '+':
 		n, ret = decodeSimpleString(in)
 	case '-':
-		var str respSimpleString
+		var str SimpleString
 		n, str = decodeSimpleString(in)
-		ret = respSimpleError(str)
+		ret = SimpleError(str)
 	case ':':
 		n, ret = decodeInteger(in)
 	case '$':
@@ -210,7 +210,7 @@ func decode(in <-chan byte) (n int, ret respObject) {
 	return n + 1, ret
 }
 
-func decodeSimpleString(in <-chan byte) (int, respSimpleString) {
+func decodeSimpleString(in <-chan byte) (int, SimpleString) {
 	n := 0
 	buf := make([]byte, 0)
 	for {
@@ -220,10 +220,10 @@ func decodeSimpleString(in <-chan byte) (int, respSimpleString) {
 		buf = append(buf, <-in)
 		n++
 	}
-	return n, respSimpleString(string(buf[:len(buf)-2]))
+	return n, SimpleString(string(buf[:len(buf)-2]))
 }
 
-func decodeInteger(in <-chan byte) (int, respInteger) {
+func decodeInteger(in <-chan byte) (int, Integer) {
 	negative := false
 	value := 0
 	n := 0
@@ -252,10 +252,10 @@ func decodeInteger(in <-chan byte) (int, respInteger) {
 	if negative {
 		value = -value
 	}
-	return n, respInteger(value)
+	return n, Integer(value)
 }
 
-func decodeBulkString(in <-chan byte) (int, respBulkString) {
+func decodeBulkString(in <-chan byte) (int, BulkString) {
 	n, length := decodeInteger(in)
 
 	if length == -1 {
@@ -265,17 +265,17 @@ func decodeBulkString(in <-chan byte) (int, respBulkString) {
 	nn, str := decodeSimpleString(in)
 	n += nn
 
-	return n, respBulkString(str)
+	return n, BulkString(str)
 }
 
-func decodeArray(in <-chan byte) (int, respArray) {
+func decodeArray(in <-chan byte) (int, Array) {
 	n, length := decodeInteger(in)
 
 	if length == -1 {
 		return n, nil
 	}
 
-	arr := make([]respObject, length)
+	arr := make([]Object, length)
 	nn := 0
 	for i := 0; i < int(length); i++ {
 		nn, arr[i] = decode(in)
@@ -284,15 +284,15 @@ func decodeArray(in <-chan byte) (int, respArray) {
 	return n, arr
 }
 
-func decodeBoolean(in <-chan byte) (int, respBoolean) {
+func decodeBoolean(in <-chan byte) (int, Boolean) {
 	ch := <-in
 	<-in
 	<-in
 	return 3, ch == 't'
 }
 
-func decodeMap(in <-chan byte) (int, respMap) {
-	dict := make(map[respObject]respObject)
+func decodeMap(in <-chan byte) (int, Map) {
+	dict := make(map[Object]Object)
 	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
 		nn, key := decode(in)
@@ -304,8 +304,8 @@ func decodeMap(in <-chan byte) (int, respMap) {
 	return n, dict
 }
 
-func decodeSet(in <-chan byte) (int, respSet) {
-	dict := make(map[respObject]struct{})
+func decodeSet(in <-chan byte) (int, Set) {
+	dict := make(map[Object]struct{})
 	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
 		nn, value := decode(in)
