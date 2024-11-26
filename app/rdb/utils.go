@@ -1,4 +1,4 @@
-package main
+package rdb
 
 func createSet[T comparable](items ...T) map[T]struct{} {
 	ret := make(map[T]struct{})
