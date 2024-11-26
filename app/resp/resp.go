@@ -163,7 +163,7 @@ func ToInt(obj Object) (int, bool) {
 	return 0, false
 }
 
-func decode(in <-chan byte) (n int, ret Object) {
+func Decode(in <-chan byte) (n int, ret Object) {
 
 	ch := <-in
 	switch ch {
@@ -278,7 +278,7 @@ func decodeArray(in <-chan byte) (int, Array) {
 	arr := make([]Object, length)
 	nn := 0
 	for i := 0; i < int(length); i++ {
-		nn, arr[i] = decode(in)
+		nn, arr[i] = Decode(in)
 		n += nn
 	}
 	return n, arr
@@ -295,9 +295,9 @@ func decodeMap(in <-chan byte) (int, Map) {
 	dict := make(map[Object]Object)
 	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
-		nn, key := decode(in)
+		nn, key := Decode(in)
 		n += nn
-		nn, value := decode(in)
+		nn, value := Decode(in)
 		n += nn
 		dict[key] = value
 	}
@@ -308,7 +308,7 @@ func decodeSet(in <-chan byte) (int, Set) {
 	dict := make(map[Object]struct{})
 	n, length := decodeInteger(in)
 	for i := 0; i < int(length); i++ {
-		nn, value := decode(in)
+		nn, value := Decode(in)
 		n += nn
 		dict[value] = struct{}{}
 	}
