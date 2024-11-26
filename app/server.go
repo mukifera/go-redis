@@ -102,25 +102,29 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 		n, response := decode(conn.byteChan)
 		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
 
-		acceptCommand(response, conn, store)
+		call := getRespArrayCall(response)
+
+		res := acceptCommand(call, conn, store)
+		if res != nil {
+			writeToConnection(conn, res.encode())
+		}
+
+		command_name, _ := getCommandName(call)
+		if command_name == "SET" {
+			propagateToReplicas(call, store)
+		}
+
+		if store.master != nil && conn.conn == store.master.conn {
+			conn.mu.Lock()
+			conn.offset += n
+			conn.mu.Unlock()
+		}
 	}
 }
 
-func acceptCommand(command respObject, conn *redisConn, store *redisStore) {
-	switch res := command.(type) {
-	case respArray:
-		handleCommand(res, conn, store)
-	case respSimpleString, respBulkString:
-		call := []respObject{res}
-		handleCommand(call, conn, store)
-	default:
-		fmt.Fprintf(os.Stderr, "invalid command %v\n", command)
-	}
-	if store.master != nil && conn.conn == store.master.conn {
-		conn.mu.Lock()
-		conn.offset += len(command.encode())
-		conn.mu.Unlock()
-	}
+func acceptCommand(command respObject, conn *redisConn, store *redisStore) respObject {
+	call := getRespArrayCall(command)
+	return handleCommand(call, conn, store)
 }
 
 func writeToConnection(conn *redisConn, data []byte) {

@@ -12,59 +12,72 @@ import (
 type commandHandlerFunc func(respArray, *redisConn, *redisStore) respObject
 type commandHandlerFuncs map[string]commandHandlerFunc
 
-var handlers commandHandlerFuncs = commandHandlerFuncs{
-	"PING":     handlePingCommand,
-	"ECHO":     handleEchoCommand,
-	"SET":      handleSetCommand,
-	"GET":      handleGetCommand,
-	"CONFIG":   handleConfigCommand,
-	"KEYS":     handleKeysCommand,
-	"INFO":     handleInfoCommand,
-	"REPLCONF": handleReplconfCommand,
-	"PSYNC":    handlePsyncCommand,
-	"WAIT":     handleWaitCommand,
-	"TYPE":     handleTypeCommand,
-	"XADD":     handleXaddCommand,
-	"XRANGE":   handleXrangeCommand,
-	"XREAD":    handleXreadCommand,
-	"INCR":     handleIncrCommand,
-	"MULTI":    handleMultiCommand,
-	"EXEC":     handleExecCommand,
-}
-
-func handleCommand(call respArray, conn *redisConn, store *redisStore) {
-
+func getCommandName(call respArray) (string, bool) {
 	command, ok := respToString(call[0])
 	if !ok {
-		fmt.Fprintln(os.Stderr, "expected command name as string")
-		return
+		return "", false
 	}
 
-	command = strings.ToUpper(command)
+	return strings.ToUpper(command), true
+}
+
+func getRespArrayCall(obj respObject) respArray {
+	switch typed := obj.(type) {
+	case respArray:
+		return typed
+	case respSimpleString, respBulkString:
+		call := []respObject{typed}
+		return call
+	default:
+		fmt.Fprintf(os.Stderr, "invalid command %v\n", obj)
+		return respArray{}
+	}
+}
+
+func handleCommand(call respArray, conn *redisConn, store *redisStore) respObject {
+
+	command, ok := getCommandName(call)
+	if !ok {
+		return respSimpleError("expected command name as string")
+	}
 
 	conn.mu.Lock()
 	if conn.multi && command != "EXEC" {
 		fmt.Printf("Queued command %v\n", call)
 		conn.queued = append(conn.queued, call)
 		conn.mu.Unlock()
-		res := respSimpleString("QUEUED")
-		writeToConnection(conn, res.encode())
-		return
+		return respSimpleString("QUEUED")
 	}
 	conn.mu.Unlock()
 
 	fmt.Printf("Received command %v\n", call)
 
-	handler, ok := handlers[command]
-	if !ok {
-		fmt.Fprintf(os.Stderr, "unknown command %v\n", call)
-		return
+	var handlers commandHandlerFuncs = commandHandlerFuncs{
+		"PING":     handlePingCommand,
+		"ECHO":     handleEchoCommand,
+		"SET":      handleSetCommand,
+		"GET":      handleGetCommand,
+		"CONFIG":   handleConfigCommand,
+		"KEYS":     handleKeysCommand,
+		"INFO":     handleInfoCommand,
+		"REPLCONF": handleReplconfCommand,
+		"PSYNC":    handlePsyncCommand,
+		"WAIT":     handleWaitCommand,
+		"TYPE":     handleTypeCommand,
+		"XADD":     handleXaddCommand,
+		"XRANGE":   handleXrangeCommand,
+		"XREAD":    handleXreadCommand,
+		"INCR":     handleIncrCommand,
+		"MULTI":    handleMultiCommand,
+		"EXEC":     handleExecCommand,
 	}
 
-	res := handler(call, conn, store)
-	if res != nil {
-		writeToConnection(conn, res.encode())
+	handler, ok := handlers[command]
+	if !ok {
+		return respSimpleError(fmt.Sprintf("unknown command %v\n", call))
 	}
+
+	return handler(call, conn, store)
 }
 
 func handlePingCommand(_ respArray, conn *redisConn, store *redisStore) respObject {
@@ -83,7 +96,6 @@ func handleEchoCommand(call respArray, conn *redisConn, _ *redisStore) respObjec
 }
 
 func handleSetCommand(call respArray, conn *redisConn, store *redisStore) respObject {
-
 	if len(call) != 3 && len(call) != 5 {
 		return respSimpleError("invalid number of arguments to SET command")
 	}
@@ -365,7 +377,7 @@ func handleXaddCommand(call respArray, conn *redisConn, store *redisStore) respO
 	if ok {
 		stream, ok = raw_stream.(*respStream)
 		if !ok {
-			fmt.Fprintf(os.Stderr, "key has a non stream value type")
+			return respSimpleError("key has a non stream value type")
 		}
 	}
 
@@ -582,20 +594,26 @@ func handleMultiCommand(call respArray, conn *redisConn, store *redisStore) resp
 
 func handleExecCommand(call respArray, conn *redisConn, store *redisStore) respObject {
 	conn.mu.Lock()
-	defer conn.mu.Unlock()
 	if !conn.multi {
+		conn.mu.Unlock()
 		return respSimpleError("ERR EXEC without MULTI")
 	}
-
 	conn.multi = false
-	return respArray{}
+	conn.mu.Unlock()
+
+	res := respArray{}
+	for _, sub_call := range conn.queued {
+		sub := acceptCommand(sub_call, conn, store)
+		res = append(res, sub)
+	}
+
+	return res
 }
 
 func blockStreamsRead(keys []string, streams []*respStream, ids []string, timer <-chan time.Time) respObject {
 	for {
 		select {
 		case <-timer:
-			fmt.Println("hi")
 			return respNullBulkString{}
 		default:
 			reads := respArray{}
@@ -823,8 +841,9 @@ func sendAckToReplica(conn *redisConn) {
 		return
 	}
 	conn.expected_offset = conn.total_propagated
-	res := generateCommand("REPLCONF", "GETACK", "*")
-	writeToConnection(conn, res.encode())
+	res := generateCommand("REPLCONF", "GETACK", "*").encode()
+	writeToConnection(conn, res)
 	conn.total_propagated += len(res)
+	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.conn.RemoteAddr(), strconv.Quote(string(res)))
 	conn.mu.Unlock()
 }
