@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/codecrafters-io/redis-starter-go/app/core"
+	"github.com/codecrafters-io/redis-starter-go/app/rdb"
 	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
@@ -817,7 +818,7 @@ func compareStreamIDs(a string, b string) int {
 }
 
 func sendCurrentState(conn *core.Conn) {
-	data := generateRDBFile(nil)
+	data := rdb.GenerateFile(nil)
 	res := resp.BulkString(data).Encode()
 	res = res[:len(res)-2]
 	conn.Write(res)
