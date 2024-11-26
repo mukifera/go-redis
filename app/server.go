@@ -3,7 +3,6 @@ package main
 import (
 	"flag"
 	"fmt"
-	"io"
 	"math/rand"
 	"net"
 	"os"
@@ -96,7 +95,7 @@ func startServer(flags serverFlags, stop <-chan struct{}) error {
 func handleConnection(conn net.Conn, store *core.Store) {
 	defer conn.Close()
 	new_conn := core.NewConn(conn, core.ConnRelationTypeEnum.NORMAL)
-	go readFromConnection(new_conn)
+	go new_conn.Read()
 	acceptCommands(new_conn, store)
 }
 
@@ -130,26 +129,6 @@ func acceptCommand(command resp.Object, conn *core.Conn, store *core.Store) resp
 	return handleCommand(call, conn, store)
 }
 
-func readFromConnection(conn *core.Conn) {
-	defer close(conn.ByteChan)
-
-	for {
-		buf := make([]byte, 1024)
-		n, err := conn.Conn.Read(buf)
-		if err == io.EOF {
-			continue
-		}
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to read from connection: %v\n", err)
-			return
-		}
-		fmt.Printf("read %d bytes from %v: %s\n", n, conn.Conn.RemoteAddr(), strconv.Quote(string(buf[:n])))
-		for i := 0; i < n; i++ {
-			conn.ByteChan <- buf[i]
-		}
-	}
-}
-
 var seededRand *rand.Rand = rand.New(rand.NewSource(time.Now().UnixNano()))
 
 func generateRandomID(length int) string {
@@ -179,7 +158,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	}
 
 	master_conn := core.NewConn(conn, core.ConnRelationTypeEnum.MASTER)
-	go readFromConnection(master_conn)
+	go master_conn.Read()
 
 	ping := generateCommand("PING")
 	master_conn.Write(ping.Encode())

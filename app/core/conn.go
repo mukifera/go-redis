@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strconv"
@@ -65,5 +66,25 @@ func (conn *Conn) Write(data []byte) {
 	}
 	if conn.Relation != ConnRelationTypeEnum.REPLICA {
 		fmt.Printf("sent %d bytes to %v: %s\n", len(data), conn.Conn.RemoteAddr(), strconv.Quote(string(data)))
+	}
+}
+
+func (conn *Conn) Read() {
+	defer close(conn.ByteChan)
+
+	for {
+		buf := make([]byte, 1024)
+		n, err := conn.Conn.Read(buf)
+		if err == io.EOF {
+			continue
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to read from connection: %v\n", err)
+			return
+		}
+		fmt.Printf("read %d bytes from %v: %s\n", n, conn.Conn.RemoteAddr(), strconv.Quote(string(buf[:n])))
+		for i := 0; i < n; i++ {
+			conn.ByteChan <- buf[i]
+		}
 	}
 }
