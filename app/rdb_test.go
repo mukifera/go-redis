@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
 func TestReadEncodedSize(t *testing.T) {
@@ -123,10 +125,10 @@ func TestReadRDBSet(t *testing.T) {
 		name       string
 		bytes      []byte
 		bytes_read uint64
-		set        map[respObject]struct{}
+		set        map[resp.Object]struct{}
 	}{
-		{name: "simple set", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, set: createSet[respObject](respBulkString("foo"), respBulkString("bar"))},
-		{name: "empty set", bytes: []byte{0x00}, bytes_read: 1, set: createSet[respObject]()},
+		{name: "simple set", bytes: []byte{0x02, 0x03, 0x66, 0x6F, 0x6F, 0x03, 0x62, 0x61, 0x72}, bytes_read: 9, set: createSet[resp.Object](resp.BulkString("foo"), resp.BulkString("bar"))},
+		{name: "empty set", bytes: []byte{0x00}, bytes_read: 1, set: createSet[resp.Object]()},
 	}
 
 	for _, test := range tests {

@@ -46,7 +46,7 @@ func TestServerRespondsToPing(t *testing.T) {
 
 	conn := newRedisConn(c, connRelationTypeEnum.NORMAL)
 	command := generateCommand("PING")
-	writeToConnection(conn, command.encode())
+	writeToConnection(conn, command.Encode())
 
 	buf := make([]byte, 7)
 	n, err := conn.conn.Read(buf)
