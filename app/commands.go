@@ -855,7 +855,7 @@ func sendAckToReplica(conn *redisConn) {
 		return
 	}
 	conn.expected_offset = conn.total_propagated
-	res := generateCommand("REPLCONF", "GETACK", "*").encode()
+	res := generateCommand("REPLCONF", "GETACK", "*").Encode()
 	writeToConnection(conn, res)
 	conn.total_propagated += len(res)
 	fmt.Printf("Propagated %d bytes to replica %v: %v\n", len(res), conn.conn.RemoteAddr(), strconv.Quote(string(res)))
