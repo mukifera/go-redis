@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/codecrafters-io/redis-starter-go/app/resp"
 )
 
 type serverFlags struct {
@@ -99,14 +101,14 @@ func handleConnection(conn net.Conn, store *redisStore) {
 
 func acceptCommands(conn *redisConn, store *redisStore) {
 	for {
-		n, response := decode(conn.byteChan)
+		n, response := resp.Decode(conn.byteChan)
 		fmt.Printf("decoded %d bytes from %v\n", n, conn.conn.RemoteAddr())
 
 		call := getRespArrayCall(response)
 
 		res := acceptCommand(call, conn, store)
 		if res != nil {
-			writeToConnection(conn, res.encode())
+			writeToConnection(conn, res.Encode())
 		}
 
 		command_name, _ := getCommandName(call)
@@ -122,7 +124,7 @@ func acceptCommands(conn *redisConn, store *redisStore) {
 	}
 }
 
-func acceptCommand(command respObject, conn *redisConn, store *redisStore) respObject {
+func acceptCommand(command resp.Object, conn *redisConn, store *redisStore) resp.Object {
 	call := getRespArrayCall(command)
 	return handleCommand(call, conn, store)
 }
@@ -173,10 +175,10 @@ func generateRandomID(length int) string {
 	return sb.String()
 }
 
-func generateCommand(strs ...string) respArray {
-	arr := respArray(make([]respObject, len(strs)))
+func generateCommand(strs ...string) resp.Array {
+	arr := resp.Array(make([]resp.Object, len(strs)))
 	for i := 0; i < len(arr); i++ {
-		bulk_str := respBulkString(strs[i])
+		bulk_str := resp.BulkString(strs[i])
 		arr[i] = &bulk_str
 	}
 	return arr
@@ -194,33 +196,33 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 	go readFromConnection(master_conn)
 
 	ping := generateCommand("PING")
-	writeToConnection(master_conn, ping.encode())
+	writeToConnection(master_conn, ping.Encode())
 	if !waitForResponse("PONG", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "failed to PING master")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping.encode())))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(ping.Encode())))
 
 	replconf := generateCommand("REPLCONF", "listening-port", listening_port)
-	writeToConnection(master_conn, replconf.encode())
+	writeToConnection(master_conn, replconf.Encode())
 	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "first REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.encode())))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
 	replconf = generateCommand("REPLCONF", "capa", "psync2")
-	writeToConnection(master_conn, replconf.encode())
+	writeToConnection(master_conn, replconf.Encode())
 	if !waitForResponse("OK", master_conn.byteChan) {
 		fmt.Fprintf(os.Stderr, "second REPLCONF to master failed")
 		os.Exit(1)
 	}
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.encode())))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(replconf.Encode())))
 
 	psync := generateCommand("PSYNC", "?", "-1")
-	writeToConnection(master_conn, psync.encode())
-	_, raw := decode(master_conn.byteChan)
-	res, ok := respToString(raw)
+	writeToConnection(master_conn, psync.Encode())
+	_, raw := resp.Decode(master_conn.byteChan)
+	res, ok := resp.ToString(raw)
 	if !ok {
 		fmt.Fprintf(os.Stderr, "response is not a string")
 		os.Exit(1)
@@ -231,13 +233,13 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 		os.Exit(1)
 	}
 
-	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync.encode())))
+	fmt.Printf("Sent command to master: %s\n", strconv.Quote(string(psync.Encode())))
 
 	if <-master_conn.byteChan != '$' {
 		fmt.Fprintf(os.Stderr, "expected an RDB file\n")
 		os.Exit(1)
 	}
-	_, raw_int := decodeInteger(master_conn.byteChan)
+	_, raw_int := resp.DecodeInteger(master_conn.byteChan)
 	n := int(raw_int)
 	for i := 0; i < n; i++ {
 		<-master_conn.byteChan
@@ -249,7 +251,7 @@ func performMasterHandshake(listening_port string, master_ip_port string, store 
 }
 
 func waitForResponse(response string, in <-chan byte) bool {
-	_, actual := decode(in)
-	str, ok := respToString(actual)
+	_, actual := resp.Decode(in)
+	str, ok := resp.ToString(actual)
 	return ok && string(str) == response
 }
