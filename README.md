@@ -20,7 +20,7 @@ The server can be run with the `go-redis.sh` script.
 | `--dir {directory}` | The directory to store the snapshot file |
 | `--dbfilename {filename}` | The name of the snapshot file |
 | `--replicaof "{master_host} {master_port}"` | Declare the server as a replica of the given master server|
-|
+
 
 ## Supported Commands
 ### Client-Server Commands
